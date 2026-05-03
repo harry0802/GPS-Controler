@@ -1,4 +1,5 @@
 import locale
+import math
 import os
 import re
 import sys
@@ -26,7 +27,7 @@ from pymobiledevice3.cli.mounter import auto_mount
 from pymobiledevice3.lockdown import create_using_usbmux, create_using_tcp, get_mobdev2_lockdowns
 from pymobiledevice3.services.amfi import AmfiService
 from pymobiledevice3.exceptions import DeviceHasPasscodeSetError, NoDeviceConnectedError
-from pymobiledevice3.services.dvt.dvt_secure_socket_proxy import DvtSecureSocketProxyService
+from pymobiledevice3.services.dvt.instruments.dvt_provider import DvtProvider as DvtSecureSocketProxyService
 from pymobiledevice3.services.dvt.instruments.location_simulation import LocationSimulation
 from pymobiledevice3.remote.remote_service_discovery import RemoteServiceDiscoveryService
 from pymobiledevice3.remote.utils import stop_remoted_if_required, resume_remoted_if_required, get_rsds
@@ -36,7 +37,7 @@ from pymobiledevice3.osu.os_utils import get_os_utils
 from pymobiledevice3.bonjour import DEFAULT_BONJOUR_TIMEOUT, browse_mobdev2
 from pymobiledevice3.pair_records import get_local_pairing_record, get_remote_pairing_record_filename, get_preferred_pair_record
 from pymobiledevice3.common import get_home_folder
-from pymobiledevice3.cli.remote import cli_install_wetest_drivers
+# cli_install_wetest_drivers removed in pymobiledevice3 v9
 
 from pymobiledevice3.cli.remote import tunnel_task
 from pymobiledevice3.lockdown import LockdownClient
@@ -112,6 +113,24 @@ terminate_location_thread = False
 location_threads = []
 timeout = DEFAULT_BONJOUR_TIMEOUT
 
+# Joystick state
+joystick_dx = 0.0
+joystick_dy = 0.0
+joystick_active = False
+joystick_speed = 1.4  # m/s walking
+joystick_thread = None
+joystick_stop_event = threading.Event()
+
+# Connection state for reconnect
+connection_status = "connected"  # "connected" | "disconnected" | "reconnecting"
+current_lat = None
+current_lng = None
+
+# Persistent location manager — one long-lived DVT connection shared by set/joystick
+import queue as _queue
+_loc_cmd_queue = _queue.Queue(maxsize=1)  # only latest command matters; old ones dropped
+_loc_manager_thread = None
+
 # Get the current platform using sys.platform
 current_platform = sys.platform
 
@@ -185,8 +204,7 @@ def run_tunnel(service_provider):
 
     except Exception as e:
         error_message = str(e)
-
-        # Handle the exception, such as logging it or returning an error response
+        logger.error(f"TCP Tunnel ERROR: {error_message}", exc_info=True)
         with app.app_context():
             return jsonify({'error': error_message})
 
@@ -246,8 +264,7 @@ def run_tcp_tunnel(service_provider):
 
     except Exception as e:
         error_message = str(e)
-
-        # Handle the exception, such as logging it or returning an error response
+        logger.error(f"TCP Tunnel ERROR: {error_message}", exc_info=True)
         with app.app_context():
             return jsonify({'error': error_message})
 
@@ -261,33 +278,23 @@ def start_tcp_tunnel_thread(service_provider):
     thread.start()
     return
 
-async def start_tcp_tunnel(service_provider: CoreDeviceTunnelProxy) -> None:
+async def start_tcp_tunnel(service_provider=None) -> None:
 
     logger.warning("Start USB TCP tunnel")
 
-    global terminate_tunnel_thread
-    stop_remoted_if_required()
-    #install_driver_if_required()
+    global terminate_tunnel_thread, rsd_host, rsd_port
 
-    #service = await create_core_device_tunnel_service_using_rsd(service_provider, autopair=True)
-
-    lockdown = create_using_usbmux(udid, autopair=True)
-    #print("Lockdown for Windows: ", lockdown)
-    service = CoreDeviceTunnelProxy(lockdown)
-    #asyncio.run(tunnel_task(service, secrets=None, protocol=TunnelProtocol.TCP), debug=True)
-    async with service.start_tcp_tunnel() as tunnel_result:
+    lockdown = await create_using_usbmux(udid, autopair=True)
+    proxy = await CoreDeviceTunnelProxy.create(lockdown)
+    async with proxy.start_tcp_tunnel() as tunnel_result:
         logger.info(f"TCP Address: {tunnel_result.address}")
         logger.info(f"TCP Port: {tunnel_result.port}")
-        global rsd_port
-        global rsd_host
         rsd_host = tunnel_result.address
-
         rsd_port = str(tunnel_result.port)
 
         while True:
             if terminate_tunnel_thread is True:
                 return
-            # wait user input while the asyncio tasks execute
             await asyncio.sleep(.5)
 
 
@@ -393,7 +400,7 @@ def get_devices_with_retry(max_attempts=10):
         logger.info(f"iOS Version: {ios_version}")
         if version_check(ios_version):
             logger.info("Windows Driver Install Required")
-            cli_install_wetest_drivers()
+            pass  # cli_install_wetest_drivers removed in pymobiledevice3 v9
     for attempt in range(1, max_attempts + 1):
         try:
             devices = asyncio.run(get_rsds(timeout))
@@ -512,15 +519,15 @@ def check_pair_record(udid):
 
 def check_developer_mode(udid, connection_type):
     try:
-
         logger.warning(f"Check Developer Mode")
 
-        lockdown = create_using_usbmux(udid, connection_type=connection_type, autopair=True)
+        async def _check():
+            lockdown = await create_using_usbmux(udid, connection_type=connection_type, autopair=True)
+            return await lockdown.get_developer_mode_status()
 
-        result = lockdown.developer_mode_status
+        result = asyncio.run(_check())
         logger.info(f"Developer Mode Check result:  {result}")
 
-        # Check if developer mode is enabled
         if result:
             logger.info("Developer Mode is true")
             return True
@@ -556,16 +563,16 @@ def enable_developer_mode(udid, connection_type):
         pass
         #return False, "No Pair Record Found. Please use a USB cable first to create a pair record"
 
-    lockdown = create_using_usbmux(
-        udid,
-        connection_type=connection_type,
-        autopair=True,
-        pairing_records_cache_folder=home)
-
+    async def _enable():
+        lockdown = await create_using_usbmux(
+            udid,
+            connection_type=connection_type,
+            autopair=True,
+            pairing_records_cache_folder=home)
+        await AmfiService(lockdown).enable_developer_mode()
 
     try:
-
-        AmfiService(lockdown).enable_developer_mode()
+        asyncio.run(_enable())
         logger.info("Enable complete, mount developer image...")
         mount_developer_image()
 
@@ -573,10 +580,6 @@ def enable_developer_mode(udid, connection_type):
         error_message = "Error: Device has a passcode set\n \n Please temporarily remove the passcode and run GeoPort again to enable Developer Mode \n \n Go to \"Settings - Face ID & Passcode\"\n"
         logger.error(f"{error_message}")
         return False, error_message
-
-    # except Exception as e:  # Catch any other exception
-    #     logger.error(f"An error occurred: {str(e)}")
-    #     return False, f"An error occurred: {str(e)}"
 
     return True, None
 
@@ -737,22 +740,18 @@ def connect_usb(data):
                         return jsonify({'error': 'No Devices Found'})
 
             else:
-                global lockdown
-                lockdown = create_using_usbmux(udid, autopair=True)
-                logger.info(f"Create Lockdown {lockdown}")
-                start_tcp_tunnel_thread(lockdown)
+                start_tcp_tunnel_thread(None)
 
 
-            #time.sleep(3)
             if not check_rsd_data():
                 logger.error("RSD Data is None, Perhaps the tunnel isn't established")
-            else:
-                rsd_data = rsd_host, rsd_port
-                logger.info(f"RSD Data: {rsd_data}")
+                return jsonify({'error': 'Tunnel not established'})
 
             rsd_data_map.setdefault(udid, {})[connection_type] = {"host": rsd_host, "port": rsd_port}
             logger.info(f"Device Connection Map: {rsd_data_map}")
-            return jsonify({'rsd_data': rsd_data})
+            result = {"host": rsd_host, "port": rsd_port}
+            logger.info(f"Returning rsd_data: {result}")
+            return jsonify({'rsd_data': result})
 
         elif ios_version is not None and not is_major_version_17_or_greater(ios_version):
             rsd_data = ios_version, udid
@@ -765,7 +764,7 @@ def connect_usb(data):
 
             # create LockdownServiceProvider
             #global lockdown
-            lockdown = create_using_usbmux(udid, autopair=True)
+            lockdown = asyncio.run(create_using_usbmux(udid, autopair=True))
             logger.info(f"Lockdown client = {lockdown}")
             #rsd_data = rsd_host, rsd_port
             rsd_host, rsd_port = rsd_data
@@ -837,7 +836,7 @@ def connect_wifi(data):
 
             # create LockdownServiceProvider
             global lockdown
-            lockdown = create_using_usbmux(udid, connection_type=connection_type, autopair=True)
+            lockdown = asyncio.run(create_using_usbmux(udid, connection_type=connection_type, autopair=True))
             #lockdown = create_using_tcp(wifi_address, udid)
             logger.info(f"Lockdown client = {lockdown}")
 
@@ -868,7 +867,7 @@ async def start_wifi_tcp_tunnel() -> None:
     #         cli_install_wetest_drivers()
 
     #service = await create_core_device_tunnel_service_using_remotepairing(udid, wifi_address, wifi_port)
-    lockdown = create_using_usbmux(udid)
+    lockdown = await create_using_usbmux(udid)
     service = CoreDeviceTunnelProxy(lockdown)
 
     async with service.start_tcp_tunnel() as tunnel_result:
@@ -955,7 +954,7 @@ def mount_developer_image():
     try:
 
         global lockdown
-        lockdown = create_using_usbmux(udid, autopair=True)
+        lockdown = asyncio.run(create_using_usbmux(udid, autopair=True))
         logger.info(f"mount lockdown: {lockdown}")
 
         auto_mount(lockdown)
@@ -965,89 +964,124 @@ def mount_developer_image():
         error_message = str(e)
         return jsonify({'error': error_message})
 
-async def set_location_thread(latitude, longitude):
-    global terminate_location_thread
+def _location_manager_run():
+    """
+    Single long-lived thread that owns one DVT connection.
+    Reads commands from _loc_cmd_queue:
+      ('set', lat, lng)  — simulate location
+      ('clear',)         — clear simulated location, then keep connection alive
+      ('stop',)          — clear and exit
+    """
+    global rsd_host, rsd_port, udid, ios_version, connection_type, lockdown
+    global connection_status
 
+    async def _run():
+        global connection_status
+        # Grab RSD info
+        if udid in rsd_data_map and connection_type in rsd_data_map[udid]:
+            _rsd = rsd_data_map[udid][connection_type]
+            _host = _rsd['host']
+            _port = int(_rsd['port'])
+        else:
+            logger.error("Location manager: no RSD data available")
+            return
+
+        is17 = ios_version is not None and is_major_version_17_or_greater(ios_version)
+
+        try:
+            if is17:
+                async with RemoteServiceDiscoveryService((_host, _port)) as sp_rsd:
+                    async with DvtSecureSocketProxyService(sp_rsd) as dvt, LocationSimulation(dvt) as loc_sim:
+                        connection_status = "connected"
+                        logger.info("Location manager: DVT connection established")
+                        current_simulated = None
+                        while True:
+                            try:
+                                cmd = _loc_cmd_queue.get(timeout=0.3)
+                            except _queue.Empty:
+                                continue
+                            if cmd[0] == 'set':
+                                _, lat, lng = cmd
+                                await loc_sim.set(lat, lng)
+                                current_simulated = (lat, lng)
+                                connection_status = "connected"
+                            elif cmd[0] == 'clear':
+                                await loc_sim.clear()
+                                current_simulated = None
+                                connection_status = "connected"
+                            elif cmd[0] == 'stop':
+                                if current_simulated is not None:
+                                    await loc_sim.clear()
+                                return
+            else:
+                async with DvtSecureSocketProxyService(lockdown=lockdown) as dvt, LocationSimulation(dvt) as loc_sim:
+                    connection_status = "connected"
+                    logger.info("Location manager: DVT connection established (pre-17)")
+                    current_simulated = None
+                    while True:
+                        try:
+                            cmd = _loc_cmd_queue.get(timeout=0.3)
+                        except _queue.Empty:
+                            continue
+                        if cmd[0] == 'set':
+                            _, lat, lng = cmd
+                            await loc_sim.set(lat, lng)
+                            current_simulated = (lat, lng)
+                            logger.warning(f"Location Set: {lat}, {lng}")
+                            connection_status = "connected"
+                        elif cmd[0] == 'clear':
+                            await loc_sim.clear()
+                            current_simulated = None
+                            logger.warning("Location Cleared")
+                            connection_status = "connected"
+                        elif cmd[0] == 'stop':
+                            if current_simulated is not None:
+                                await loc_sim.clear()
+                            logger.info("Location manager: stopping")
+                            return
+        except Exception as e:
+            logger.error(f"Location manager error: {e}")
+            connection_status = "disconnected"
+
+    asyncio.run(_run())
+
+
+def _ensure_location_manager():
+    """Start the location manager thread if not already running."""
+    global _loc_manager_thread
+    if _loc_manager_thread is None or not _loc_manager_thread.is_alive():
+        # Drain any stale commands
+        while not _loc_cmd_queue.empty():
+            try:
+                _loc_cmd_queue.get_nowait()
+            except _queue.Empty:
+                break
+        _loc_manager_thread = threading.Thread(target=_location_manager_run, daemon=True)
+        _loc_manager_thread.start()
+
+
+def _queue_put(cmd):
+    """Discard any pending command, then enqueue the new one (non-blocking)."""
     try:
-        global rsd_host, rsd_port, udid, ios_version, connection_type
-
-        if udid in rsd_data_map:
-            if connection_type in rsd_data_map[udid]:
-                rsd_data = rsd_data_map[udid][connection_type]
-                rsd_host = rsd_data['host']
-                rsd_port = rsd_data['port']
-
-                logger.info(f"RSD in udid mapping is: {rsd_data}")
-                logger.info("RSD already created. Reusing connection")
-                logger.info(f"RSD Data: {rsd_data}")
-
-
-                if ios_version is not None and is_major_version_17_or_greater(ios_version):
-                    async with RemoteServiceDiscoveryService((rsd_host, rsd_port)) as sp_rsd:
-                        with DvtSecureSocketProxyService(sp_rsd) as dvt:
-                            LocationSimulation(dvt).set(latitude, longitude)
-                            logger.warning("Location Set Successfully")
-                            #OSUTILS.wait_return()
-                            while not terminate_location_thread:
-                                time.sleep(0.5)
-
-
-                elif ios_version is not None and not is_major_version_17_or_greater(ios_version):
-                    with DvtSecureSocketProxyService(lockdown=lockdown) as dvt:
-                        LocationSimulation(dvt).clear()
-                        LocationSimulation(dvt).set(latitude, longitude)
-                        logger.warning("Location Set Successfully")
-                        #await asyncio.wait_for(OSUTILS.wait_return(), timeout=1)  # Adjust timeout as needed
-                        while not terminate_location_thread:
-                            time.sleep(0.5)
-
-                await asyncio.sleep(1)  # Adjust sleep time according to your requirements
-
-    except asyncio.CancelledError:
-        # Handle cancellation gracefully
+        _loc_cmd_queue.get_nowait()
+    except _queue.Empty:
         pass
-    except ConnectionResetError as cre:
-        if "[Errno 54] Connection reset by peer" in str(cre):
-            logger.error("The Set Location buffer is full. Try to 'Stop Location' to clear old connections")
-    except Exception as e:
-        logger.error(f"Error setting location: {e}")
+    _loc_cmd_queue.put_nowait(cmd)
 
 
-# Function to start the set_location_thread in a separate thread
 def start_set_location_thread(latitude, longitude):
-    global terminate_location_thread
-    # Stop existing threads
-    stop_set_location_thread()
-
-    # Reset the terminate flag before starting the thread
-    terminate_location_thread = False
+    _ensure_location_manager()
+    _queue_put(('set', latitude, longitude))
 
 
-
-    # Define a helper function to run the async function in the thread
-    async def run_async_function():
-        await set_location_thread(latitude, longitude)
-
-    # Define a function to periodically check if the thread should terminate
-    def check_termination():
-        while not terminate_location_thread:
-            asyncio.run(asyncio.sleep(1))  # Adjust sleep time as needed
-        logger.info("Location Thread Terminated")
-
-    # Create a new thread and start it
-    location_thread = threading.Thread(target=lambda: asyncio.run(run_async_function()))
-    location_thread.start()
-
-    # Create a new thread for checking termination
-    termination_thread = threading.Thread(target=check_termination)
-    termination_thread.start()
-
-
-# Function to stop the location thread
 def stop_set_location_thread():
-    # Set the flag to indicate that the thread should stop
     global terminate_location_thread
-    terminate_location_thread = True
+    terminate_location_thread = True  # keep compat flag
+    global _loc_manager_thread
+    if _loc_manager_thread and _loc_manager_thread.is_alive():
+        _queue_put(('stop',))
+        _loc_manager_thread.join(timeout=3)
+        _loc_manager_thread = None
 
 
 
@@ -1060,29 +1094,27 @@ def set_location():
         global udid, connection_type
         global ios_version
 
+        # Allow caller to pass lat/lng directly (used by joystick)
+        data = request.get_json(silent=True) or {}
+        if 'lat' in data and 'lng' in data:
+            latitude = float(data['lat'])
+            longitude = float(data['lng'])
+            location = f"{latitude} {longitude}"
+        else:
+            lat_str, lng_str = location.split()
+            latitude, longitude = float(lat_str), float(lng_str)
+
         if ios_version is not None and is_major_version_17_or_greater(ios_version):
-            # Split the location string into latitude and longitude
-            latitude, longitude = location.split()
-
-            #asyncio.run(set_location_thread(latitude, longitude))
             start_set_location_thread(latitude, longitude)
-
             return 'Location set successfully'
 
         elif ios_version is not None and not is_major_version_17_or_greater(ios_version):
             global lockdown
-            # Split the location string into latitude and longitude
-            latitude, longitude = location.split()
-
             mount_developer_image()
-            #asyncio.run(set_location_thread(latitude, longitude))
             start_set_location_thread(latitude, longitude)
-
-
             return 'Location set successfully'
 
         else:
-            # Invalid ios_version
             return jsonify({'error': 'No iOS version present'})
 
     except Exception as e:
@@ -1091,41 +1123,77 @@ def set_location():
 
 
 @app.route('/stop_location', methods=['POST'])
-async def stop_location():
+def stop_location():
     try:
         stop_set_location_thread()
-        global rsd_data
-        global rsd_host
-        global rsd_port
-        global lockdown
-        global ios_version, udid, connection_type
-        logger.info(f"stop set location data:  {rsd_data}")
-
-
-        if udid in rsd_data_map:
-            if connection_type in rsd_data_map[udid]:
-                rsd_data = rsd_data_map[udid][connection_type]
-
-                rsd_host = rsd_data['host']
-                rsd_port = rsd_data['port']
-
-            if ios_version is not None and is_major_version_17_or_greater(ios_version):
-                async with RemoteServiceDiscoveryService((rsd_host, rsd_port)) as sp_rsd:
-                    with DvtSecureSocketProxyService(sp_rsd) as dvt:
-                        LocationSimulation(dvt).clear()
-                        logger.warning("Location Cleared Successfully")
-                return 'Location cleared successfully'
-
-            elif ios_version is not None and not is_major_version_17_or_greater(ios_version):
-                with DvtSecureSocketProxyService(lockdown=lockdown) as dvt:
-
-                    LocationSimulation(dvt).clear()
-                    logger.warning("Location Cleared Successfully")
-                return 'Location cleared successfully'
         return 'Location cleared successfully'
     except Exception as e:
-        error_message = str(e)
-        return jsonify({'error': error_message})
+        return jsonify({'error': str(e)})
+
+
+@app.route('/joystick', methods=['POST'])
+def joystick_update():
+    global joystick_dx, joystick_dy, joystick_active, joystick_speed
+    data = request.get_json()
+    joystick_dx = float(data.get('dx', 0))
+    joystick_dy = float(data.get('dy', 0))
+    joystick_speed = float(data.get('speed', 1.4))
+    joystick_active = (joystick_dx != 0 or joystick_dy != 0)
+    return jsonify({'status': 'ok'})
+
+
+@app.route('/joystick/start', methods=['POST'])
+def joystick_start():
+    global joystick_thread, joystick_stop_event, current_lat, current_lng
+    data = request.get_json()
+    current_lat = float(data['lat'])
+    current_lng = float(data['lng'])
+    joystick_stop_event.set()
+    if joystick_thread and joystick_thread.is_alive():
+        joystick_thread.join(timeout=1)
+    joystick_stop_event.clear()
+    _ensure_location_manager()
+    joystick_thread = threading.Thread(target=joystick_loop, daemon=True)
+    joystick_thread.start()
+    return jsonify({'status': 'started'})
+
+
+@app.route('/joystick/stop', methods=['POST'])
+def joystick_stop_route():
+    joystick_stop_event.set()
+    return jsonify({'status': 'stopped'})
+
+
+@app.route('/connection_status', methods=['GET'])
+def get_connection_status():
+    return jsonify({'status': connection_status})
+
+
+UPDATE_INTERVAL = 0.4
+METERS_PER_DEGREE_LAT = 111320.0
+HEARTBEAT_INTERVAL = 30
+
+
+def joystick_loop():
+    global current_lat, current_lng, joystick_dx, joystick_dy, joystick_active, joystick_speed
+    last_heartbeat = time.time()
+    _ensure_location_manager()
+
+    while not joystick_stop_event.is_set():
+        now = time.time()
+
+        if joystick_active and current_lat is not None and current_lng is not None:
+            dist = joystick_speed * UPDATE_INTERVAL
+            delta_lat = (joystick_dy * dist) / METERS_PER_DEGREE_LAT
+            delta_lng = (joystick_dx * dist) / (METERS_PER_DEGREE_LAT * math.cos(math.radians(current_lat)))
+            current_lat += delta_lat
+            current_lng += delta_lng
+
+        if current_lat is not None and (joystick_active or (now - last_heartbeat >= HEARTBEAT_INTERVAL)):
+            _queue_put(('set', current_lat, current_lng))
+            last_heartbeat = now
+
+        joystick_stop_event.wait(UPDATE_INTERVAL)
 
 
 def get_github_version():
@@ -1177,113 +1245,76 @@ async def get_network_devices():
 
 @app.route('/list_devices')
 def py_list_devices():
-    try:
+    async def _inner():
         connected_devices = {}
 
-        # Retrieve all devices
-        all_devices = list_devices()
-        #wifi_devices = None
-        #wifi_devices = asyncio.run(get_network_devices())
+        all_devices = await list_devices()
         logger.info(f"\n\nRaw Devices:  {all_devices}\n")
-        #logger.info(f"\n\nWifi Devices:  {wifi_devices}\n")
-
 
         if wifihost:
             udid = args.udid
             logger.warning(f"Wifi requested to {wifihost}")
             logger.warning(f"udid: {udid}")
-            lockdown = create_using_tcp(hostname=wifihost, identifier=udid)
-
-            # udid = lockdown.udid
-            # print("wifi udid", udid)
+            lockdown = await create_using_tcp(hostname=wifihost, identifier=udid)
             info = lockdown.short_info
             logger.warning(f"Wifi Short Info: {info}")
-            # Modify the info dictionary to include wifiConState
-            wifi_connection_state = lockdown.enable_wifi_connections = True
-            info['wifiState'] = wifi_connection_state
-
-            # Modify the info dictionary to include user locale
+            wifi_connection_state = await lockdown.set_enable_wifi_connections(True)
+            info['wifiState'] = True
             info['userLocale'] = get_user_country()
-
             info['ConnectionType'] = 'Network'
-
-            # Substitute "Network" with "Wifi" in the connection_type
             connection_type = "Manual Wifi"
-            # if connection_type == "Network":
-            #     connection_type = "Wifi"
-
-            # If the serial already exists in the connected_devices dictionary
             if udid in connected_devices:
-                # If the connection_type already exists under the serial, append the device to the list
                 if connection_type in connected_devices[udid]:
                     connected_devices[udid][connection_type].append(info)
-                # If the connection_type doesn't exist under the serial, create a new list with the device
                 else:
                     connected_devices[udid][connection_type] = [info]
-            # If the serial is new, create a new dictionary entry with the connection_type as a list
             else:
                 connected_devices[udid] = {connection_type: [info]}
-
-
-
-
-
-
-        # Iterate through all devices
 
         for device in all_devices:
             udid = device.serial
             connection_type = device.connection_type
+            try:
+                lockdown = await create_using_usbmux(udid, connection_type=connection_type, autopair=True)
+                info = lockdown.short_info
 
-            # Create lockdown and info variables
-            #global lockdown
-            lockdown = create_using_usbmux(udid, connection_type=connection_type, autopair=True)
-            info = lockdown.short_info
+                wifi_connection_state = await lockdown.get_enable_wifi_connections()
+                if wifi_connection_state == False:
+                    logger.info("Enabling Wifi Connections")
+                    await lockdown.set_enable_wifi_connections(True)
+                    wifi_connection_state = True
 
+                info['wifiState'] = wifi_connection_state
+                info['userLocale'] = get_user_country()
 
-            wifi_connection_state = lockdown.enable_wifi_connections
+                if connection_type == "Network":
+                    connection_type = "Wifi"
 
-            if wifi_connection_state == False:
-                logger.info("Enabling Wifi Connections")
-                wifi_connection_state = lockdown.enable_wifi_connections = True
-                logger.info(f"Wifi Connection State: True")
-
-            # Modify the info dictionary to include wifiConState
-            info['wifiState'] = wifi_connection_state
-
-            # Modify the info dictionary to include user locale
-            info['userLocale'] = get_user_country()
-
-            # Substitute "Network" with "Wifi" in the connection_type
-            if connection_type == "Network":
-                connection_type = "Wifi"
-
-            # If the serial already exists in the connected_devices dictionary
-            if udid in connected_devices:
-                # If the connection_type already exists under the serial, append the device to the list
-                if connection_type in connected_devices[udid]:
-                    connected_devices[udid][connection_type].append(info)
-                # If the connection_type doesn't exist under the serial, create a new list with the device
+                if udid in connected_devices:
+                    if connection_type in connected_devices[udid]:
+                        connected_devices[udid][connection_type].append(info)
+                    else:
+                        connected_devices[udid][connection_type] = [info]
                 else:
-                    connected_devices[udid][connection_type] = [info]
-            # If the serial is new, create a new dictionary entry with the connection_type as a list
-            else:
-                connected_devices[udid] = {connection_type: [info]}
+                    connected_devices[udid] = {connection_type: [info]}
+            except Exception as e:
+                logger.error(f"Error getting info for device {udid}: {e}")
 
         logger.info(f"\n\nConnected Devices: {connected_devices}\n")
 
-        # Check if running as sudo
         if current_platform == "darwin":
             if os.geteuid() != 0:
                 logger.error("*********************** WARNING ***********************")
                 logger.error("Not running as Sudo, this probably isn't going to work")
                 logger.error("*********************** WARNING ***********************")
-        return jsonify(connected_devices)
+        return connected_devices
 
+    try:
+        connected_devices = asyncio.run(_inner())
+        return jsonify(connected_devices)
     except ConnectionAbortedError as e:
         logger.error(f"ConnectionAbortedError occurred: {e}")
-        return {"error"}
-
+        return jsonify({'error': str(e)})
     except Exception as e:
         error_message = str(e)
         return jsonify({'error': error_message})

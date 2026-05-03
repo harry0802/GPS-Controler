@@ -19,6 +19,7 @@
     <script src="https://cdn.jsdelivr.net/npm/leaflet-filelayer@1.2.0/src/leaflet.filelayer.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/leaflet-routing-machine@3.2.12/dist/leaflet-routing-machine.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/leaflet-easybutton@2.4.0/src/easy-button.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/nipplejs/0.10.1/nipplejs.min.js"></script>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet" integrity="sha384-1BmE4kWBq78iYhFldvKuhfTAU6auU8tT94WrHftjDbrCEXSU1oBoqyl2QvZ6jIW3" crossorigin="anonymous">
     <link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootstrap/4.3.1/css/bootstrap.min.css">
     <link href="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.min.css" rel="stylesheet">
@@ -912,16 +913,15 @@ var playbackButton = L.easyButton({
                 return; // Prevent multiple playbacks
             }
 
-            isPlaybackStopped = false; // Set playback status to active
-            console.log("before playback");
-
-            // If playback was paused, resume from the current position
-            if (wasPlaybackPaused) {
-                processNextPoint();
-            } else {
-                playbackIndex = 0; // Reset playback index
-                processNextPoint(); // Start processing points from the beginning
+            isPlaybackStopped = false;
+            if (!wasPlaybackPaused) {
+                // fresh start: reset smooth-playback state
+                _smoothSegIdx = 0;
+                _smoothSegT = 0;
+                playbackIndex = 0;
             }
+            wasPlaybackPaused = false;
+            processNextPoint();
 
             // Change button state to pause
             btn.state('pause');
@@ -932,17 +932,22 @@ var playbackButton = L.easyButton({
         title: 'Pause GPX Playback', // Tooltip for the button
         onClick: function(btn, map) {
             // Pause GPX playback
-            isPlaybackStopped = !isPlaybackStopped; // Toggle playback status
-            if (isPlaybackStopped) {
+            if (!isPlaybackStopped) {
+                // currently playing → pause
+                isPlaybackStopped = true;
+                wasPlaybackPaused = true;
+                if (_smoothPlaybackTimer) {
+                    clearInterval(_smoothPlaybackTimer);
+                    _smoothPlaybackTimer = null;
+                }
                 console.log('Playback paused');
-                wasPlaybackPaused = true; // Set flag indicating playback was paused
             } else {
+                // currently paused → resume
+                isPlaybackStopped = false;
                 console.log('Playback resumed');
-                wasPlaybackPaused = false; // Reset flag indicating playback was not paused
-                processNextPoint(); // Resume processing if playback is resumed
+                if (_smoothPlaybackTimer) clearInterval(_smoothPlaybackTimer);
+                _smoothPlaybackTimer = setInterval(_smoothTick, GPS_TICK_MS);
             }
-
-            // Change button state back to play
             btn.state('play');
         }
     }]
@@ -1209,42 +1214,93 @@ function handleMapClick(event) {
 
 
 // Function to process next point in GPX data
-function processNextPoint() {
-    console.log("process next point");
-    console.log("Velocity is set to: ", velocitySelect);
+// Smooth playback: interpolate between waypoints at a fixed GPS tick of 500ms
+var _smoothPlaybackTimer = null;
+var _smoothCurLat = null;
+var _smoothCurLng = null;
+var _smoothSegIdx = 0;      // which segment (between waypoints) we're on
+var _smoothSegT = 0;        // progress [0,1] through current segment
+var GPS_TICK_MS = 500;      // how often we push a location update
 
-    if (playbackIndex >= lineLatLngs.length || isPlaybackStopped) return; // End condition
+function _smoothTick() {
+    if (isPlaybackStopped) return;
 
-    const [lat, lng] = lineLatLngs[playbackIndex]; // Get coordinates for current point
-    console.log(`Processing point ${playbackIndex + 1} of ${lineLatLngs.length}: (${lat}, ${lng})`); // Log current point
-
-    if (!gpxMarker || !map.hasLayer(gpxMarker)) {
-        // Create marker if it doesn't exist or has been removed
-        gpxMarker = L.marker([lat, lng], { icon: orangeIcon }).addTo(drawnItems);
-    } else {
-        // Update marker position
-        gpxMarker.setLatLng([lat, lng]);
+    if (_smoothSegIdx >= lineLatLngs.length - 1) {
+        // arrived at last point
+        const [lat, lng] = lineLatLngs[lineLatLngs.length - 1];
+        _pushRouteLocation(lat, lng);
+        clearInterval(_smoothPlaybackTimer);
+        _smoothPlaybackTimer = null;
+        isPlaybackStopped = true;
+        map.fire('playbackchange');
+        return;
     }
 
-    setCoordinates(lat, lng); // Set coordinates
-    setLocationArrows();
+    // Advance by GPS_TICK_MS worth of distance at current velocity (shared with joystick)
+    var remainDist = joystickSpeed * (GPS_TICK_MS / 1000); // metres to cover this tick
 
-    //const velocity = document.getElementById('velocitySelect').value; // Get selected velocity
-    const velocity = velocitySelect;
-    const distance = playbackIndex > 0 ?
-        calculateDistance(lineLatLngs[playbackIndex - 1][0], lineLatLngs[playbackIndex - 1][1], lat, lng) :
-        0; // Calculate distance from previous point
-    timeToNextPoint = calculateTime(distance, velocity); // Update global variable with time to next point
+    while (remainDist > 0 && _smoothSegIdx < lineLatLngs.length - 1) {
+        const [lat0, lng0] = lineLatLngs[_smoothSegIdx];
+        const [lat1, lng1] = lineLatLngs[_smoothSegIdx + 1];
+        const segDist = calculateDistance(lat0, lng0, lat1, lng1);
+        const remainSegDist = segDist * (1 - _smoothSegT);
 
-    console.log(`Time to next point: ${timeToNextPoint} seconds`); // Log time to next point
-    // Emit an event to indicate playback status change
+        if (remainDist < remainSegDist) {
+            // stay in this segment
+            _smoothSegT += remainDist / Math.max(segDist, 0.0001);
+            remainDist = 0;
+        } else {
+            // consume this segment and move to next
+            remainDist -= remainSegDist;
+            _smoothSegIdx++;
+            _smoothSegT = 0;
+        }
+    }
+
+    if (_smoothSegIdx >= lineLatLngs.length - 1) {
+        _smoothSegIdx = lineLatLngs.length - 1;
+        _smoothSegT = 0;
+    }
+
+    const [cLat0, cLng0] = lineLatLngs[_smoothSegIdx];
+    const nextIdx = Math.min(_smoothSegIdx + 1, lineLatLngs.length - 1);
+    const [cLat1, cLng1] = lineLatLngs[nextIdx];
+    const t = Math.min(_smoothSegT, 1);
+    const curLat = cLat0 + (cLat1 - cLat0) * t;
+    const curLng = cLng0 + (cLng1 - cLng0) * t;
+
+    _pushRouteLocation(curLat, curLng);
+    playbackIndex = _smoothSegIdx;
     map.fire('playbackchange');
+}
 
-    // Increment index and process next point after time interval
-    setTimeout(() => {
-        playbackIndex++;
-        processNextPoint();
-    }, timeToNextPoint * 1000); // Convert time to milliseconds
+function _pushRouteLocation(lat, lng) {
+    if (!gpxMarker || !map.hasLayer(gpxMarker)) {
+        gpxMarker = L.marker([lat, lng], { icon: orangeIcon }).addTo(drawnItems);
+    } else {
+        gpxMarker.setLatLng([lat, lng]);
+    }
+    setCoordinates(lat, lng);
+    fetch('/set_location', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({lat: lat, lng: lng})
+    });
+}
+
+function processNextPoint() {
+    if (isPlaybackStopped) return;
+
+    // Reset smooth state on fresh start (not resume)
+    if (!wasPlaybackPaused) {
+        _smoothSegIdx = 0;
+        _smoothSegT = 0;
+    }
+
+    if (_smoothPlaybackTimer) {
+        clearInterval(_smoothPlaybackTimer);
+    }
+    _smoothPlaybackTimer = setInterval(_smoothTick, GPS_TICK_MS);
 }
 
 function calculateRoute(startPoint, endPoint) {
@@ -2294,6 +2350,8 @@ function setLocationArrows() {
         var coordinatesInput = document.getElementById('coordinates');
         var enableButton = rsdDataElement.value.trim() !== '' && coordinatesInput.value.trim() !== '';
         setLocationButton.disabled = !enableButton;
+        var joystickBtn = document.getElementById('toggle-joystick');
+        if (joystickBtn) joystickBtn.disabled = rsdDataElement.value.trim() === '';
     }
 
     // Function to enable or disable the Stop Location button based on conditions
@@ -2519,6 +2577,192 @@ function continueAfterDeveloperModeRequired() {
 });
 </script>
 
+<script>
+// ===== Joystick =====
+// Speed in m/s — higher values for games like Pikmin
+const SPEED_MAP = { walk: 1.4, run: 4.5, bike: 5.2 };
+let joystickSpeed = 3.0;
+let joystickEnabled = false;
+let nippleManager = null;
+let connStatusPollTimer = null;
+let connStatus = 'connected';
+
+// Joystick state — managed entirely in frontend for low latency
+let _joyDx = 0, _joyDy = 0;       // current direction vector (unit-ish, force-scaled)
+let _joyLat = null, _joyLng = null; // current simulated position
+let _joyTimer = null;               // setInterval handle
+const JOY_TICK_MS = 250;            // send GPS update every 250ms
+const METERS_PER_DEG_LAT = 111320.0;
+
+function toggleJoystick() {
+    joystickEnabled = !joystickEnabled;
+    document.getElementById('joystick-panel').style.display = joystickEnabled ? 'block' : 'none';
+    document.getElementById('toggle-joystick').textContent = joystickEnabled ? '關閉搖桿' : '搖桿模式';
+
+    if (joystickEnabled) {
+        // Use current coordinates as starting point
+        const coordsVal = document.getElementById('coordinates').value.trim();
+        if (coordsVal) {
+            const parts = coordsVal.split(',');
+            _joyLat = parseFloat(parts[0]);
+            _joyLng = parseFloat(parts[1]);
+        } else {
+            const center = map.getCenter();
+            _joyLat = center.lat;
+            _joyLng = center.lng;
+        }
+        _joyDx = 0; _joyDy = 0;
+        initNipple();
+        startConnStatusPoll();
+        // Tick loop: update position and push to device
+        _joyTimer = setInterval(_joyTick, JOY_TICK_MS);
+    } else {
+        destroyNipple();
+        _dpadClear();
+        if (_joyTimer) { clearInterval(_joyTimer); _joyTimer = null; }
+        stopConnStatusPoll();
+        fetch('/joystick/stop', {method: 'POST'});
+    }
+}
+
+function _joyTick() {
+    if (_joyLat === null || (_joyDx === 0 && _joyDy === 0)) return;
+    const dt = JOY_TICK_MS / 1000;
+    const dist = joystickSpeed * dt;
+    const dLat = (_joyDy * dist) / METERS_PER_DEG_LAT;
+    const dLng = (_joyDx * dist) / (METERS_PER_DEG_LAT * Math.cos(_joyLat * Math.PI / 180));
+    _joyLat += dLat;
+    _joyLng += dLng;
+
+    document.getElementById('coordinates').value = _joyLat + ', ' + _joyLng;
+
+    // Single POST with lat/lng — no manual button needed
+    fetch('/set_location', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({lat: _joyLat, lng: _joyLng})
+    });
+}
+
+function initNipple() {
+    nippleManager = nipplejs.create({
+        zone: document.getElementById('joystick-zone'),
+        mode: 'static',
+        position: {left: '50%', top: '50%'},
+        color: '#007bff',
+        size: 120
+    });
+    nippleManager.on('move', function(evt, data) {
+        if (_dpadActive) return; // d-pad in use, ignore nipple
+        const angle = data.angle.radian;
+        const force = Math.min(data.force, 1);
+        _joyDx = Math.cos(angle) * force;
+        _joyDy = Math.sin(angle) * force;
+    });
+    nippleManager.on('end', function() {
+        if (_dpadActive) return;
+        _joyDx = 0;
+        _joyDy = 0;
+    });
+}
+
+function destroyNipple() {
+    if (nippleManager) {
+        nippleManager.destroy();
+        nippleManager = null;
+    }
+    _joyDx = 0; _joyDy = 0;
+}
+
+function setJoystickSpeed(mode, btn) {
+    document.querySelectorAll('#joystick-panel .btn-group .btn').forEach(function(b) {
+        b.classList.remove('active');
+    });
+    btn.classList.add('active');
+
+    if (mode === 'custom') {
+        document.getElementById('custom-speed-input').classList.remove('d-none');
+        // Don't change speed yet, wait for applyCustomSpeed
+        return;
+    }
+    document.getElementById('custom-speed-input').classList.add('d-none');
+    joystickSpeed = SPEED_MAP[mode];
+}
+
+function applyCustomSpeed() {
+    var kmh = parseFloat(document.getElementById('custom-kmh').value);
+    if (isNaN(kmh) || kmh <= 0) { alert('請輸入有效的速度'); return; }
+    joystickSpeed = kmh / 3.6; // convert km/h to m/s
+    // Update button label
+    document.getElementById('speed-btn-custom').textContent = kmh + 'km/h';
+}
+
+function startConnStatusPoll() {
+    connStatusPollTimer = setInterval(function() {
+        fetch('/connection_status').then(function(r) { return r.json(); }).then(function(d) {
+            connStatus = d.status;
+            const dot = document.getElementById('conn-indicator');
+            if (dot) {
+                dot.style.background = connStatus === 'connected' ? 'green'
+                    : connStatus === 'reconnecting' ? 'orange' : 'red';
+            }
+            if (connStatus === 'disconnected') {
+                sendJoystick(0, 0);
+            }
+        }).catch(function() {});
+    }, 2000);
+}
+
+function stopConnStatusPoll() {
+    if (connStatusPollTimer) {
+        clearInterval(connStatusPollTimer);
+        connStatusPollTimer = null;
+    }
+}
+
+// D-pad: toggle mode — click to start moving, click same again (or another) to stop/switch
+var _dpadActive = null; // 'n'|'s'|'e'|'w' or null
+var _dpadTimer = null;
+
+function dpadToggle(dx, dy, dir) {
+    if (!joystickEnabled) return;
+
+    if (_dpadActive === dir) {
+        // Same button → stop, restore joystick timer
+        _dpadClear();
+        return;
+    }
+
+    // Switch direction (or fresh start)
+    _dpadClear();
+    _dpadActive = dir;
+    document.getElementById('dpad-' + dir).classList.add('active');
+
+    // Stop nipple movement and its timer — d-pad takes over
+    _joyDx = 0; _joyDy = 0;
+    if (_joyTimer) { clearInterval(_joyTimer); _joyTimer = null; }
+
+    _joyDx = dx;
+    _joyDy = dy;
+    _joyTick();
+    _dpadTimer = setInterval(_joyTick, JOY_TICK_MS);
+}
+
+function _dpadClear() {
+    if (_dpadTimer) { clearInterval(_dpadTimer); _dpadTimer = null; }
+    _joyDx = 0; _joyDy = 0;
+    if (_dpadActive) {
+        var btn = document.getElementById('dpad-' + _dpadActive);
+        if (btn) btn.classList.remove('active');
+    }
+    _dpadActive = null;
+    // Restore nipple timer
+    if (joystickEnabled && !_joyTimer) {
+        _joyTimer = setInterval(_joyTick, JOY_TICK_MS);
+    }
+}
+</script>
+
 <p></p>
 
 <div class="mb-3">
@@ -2542,6 +2786,50 @@ function continueAfterDeveloperModeRequired() {
         </div>
         <div class="col">
             <button type="button" class="btn btn-primary w-100" data-toggle="popover" id="stop-location" disabled onclick="stopLocation()">Stop Location</button>
+        </div>
+    </div>
+    <div class="row mt-2">
+        <div class="col">
+            <button type="button" class="btn btn-secondary w-100" id="toggle-joystick" disabled onclick="toggleJoystick()">搖桿模式</button>
+        </div>
+    </div>
+    <div id="joystick-panel" class="mt-3" style="display:none;">
+        <div class="d-flex align-items-center mb-2 flex-wrap gap-2">
+            <span>速度：</span>
+            <div class="btn-group" role="group">
+                <button class="btn btn-sm btn-outline-secondary active" id="speed-btn-walk" onclick="setJoystickSpeed('walk',this)">5km/h</button>
+                <button class="btn btn-sm btn-outline-secondary" id="speed-btn-run" onclick="setJoystickSpeed('run',this)">16km/h</button>
+                <button class="btn btn-sm btn-outline-secondary" id="speed-btn-bike" onclick="setJoystickSpeed('bike',this)">19km/h</button>
+                <button class="btn btn-sm btn-outline-secondary" id="speed-btn-custom" onclick="setJoystickSpeed('custom',this)">自訂</button>
+            </div>
+            <div id="custom-speed-input" class="d-none mt-1 d-flex align-items-center gap-1" style="width:100%;">
+                <input type="number" id="custom-kmh" class="form-control form-control-sm" style="width:80px;" min="1" max="200" placeholder="km/h">
+                <span>km/h</span>
+                <button class="btn btn-sm btn-primary" onclick="applyCustomSpeed()">套用</button>
+            </div>
+            <span class="ms-2">狀態：<span id="conn-indicator" style="display:inline-block;width:12px;height:12px;border-radius:50%;background:green;vertical-align:middle;"></span></span>
+        </div>
+        <div id="joystick-zone" style="width:150px;height:150px;background:#dde;border-radius:50%;position:relative;touch-action:none;"></div>
+
+        <!-- D-pad: press & hold to move continuously in that direction -->
+        <div class="mt-3" style="display:grid;grid-template-columns:44px 44px 44px;grid-template-rows:44px 44px 44px;gap:4px;width:140px;">
+            <button class="btn btn-outline-secondary p-0" style="font-size:16px;user-select:none;touch-action:none;"
+                id="dpad-nw" onclick="dpadToggle(-0.707,0.707,'nw')">↖</button>
+            <button class="btn btn-outline-primary p-0" style="font-size:20px;user-select:none;touch-action:none;"
+                id="dpad-n" onclick="dpadToggle(0,1,'n')">▲</button>
+            <button class="btn btn-outline-secondary p-0" style="font-size:16px;user-select:none;touch-action:none;"
+                id="dpad-ne" onclick="dpadToggle(0.707,0.707,'ne')">↗</button>
+            <button class="btn btn-outline-primary p-0" style="font-size:20px;user-select:none;touch-action:none;"
+                id="dpad-w" onclick="dpadToggle(-1,0,'w')">◀</button>
+            <div style="display:flex;align-items:center;justify-content:center;background:#eee;border-radius:4px;font-size:11px;color:#999;">■</div>
+            <button class="btn btn-outline-primary p-0" style="font-size:20px;user-select:none;touch-action:none;"
+                id="dpad-e" onclick="dpadToggle(1,0,'e')">▶</button>
+            <button class="btn btn-outline-secondary p-0" style="font-size:16px;user-select:none;touch-action:none;"
+                id="dpad-sw" onclick="dpadToggle(-0.707,-0.707,'sw')">↙</button>
+            <button class="btn btn-outline-primary p-0" style="font-size:20px;user-select:none;touch-action:none;"
+                id="dpad-s" onclick="dpadToggle(0,-1,'s')">▼</button>
+            <button class="btn btn-outline-secondary p-0" style="font-size:16px;user-select:none;touch-action:none;"
+                id="dpad-se" onclick="dpadToggle(0.707,-0.707,'se')">↘</button>
         </div>
     </div>
 
