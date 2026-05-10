@@ -1043,7 +1043,13 @@ def _location_manager_run():
             logger.error(f"Location manager error: {e}")
             connection_status = "disconnected"
 
-    asyncio.run(_run())
+    # 每次都建立全新的 event loop，避免 "Event loop is closed" 錯誤
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    try:
+        loop.run_until_complete(_run())
+    finally:
+        loop.close()
 
 
 def _ensure_location_manager():
@@ -1100,9 +1106,11 @@ def set_location():
             latitude = float(data['lat'])
             longitude = float(data['lng'])
             location = f"{latitude} {longitude}"
-        else:
+        elif location:
             lat_str, lng_str = location.split()
             latitude, longitude = float(lat_str), float(lng_str)
+        else:
+            return jsonify({'error': 'No location set. Please search or select a location first.'})
 
         if ios_version is not None and is_major_version_17_or_greater(ios_version):
             start_set_location_thread(latitude, longitude)

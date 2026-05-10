@@ -9,19 +9,27 @@ let wasPlaybackPaused = false;
 let velocitySelect = 'walk';
 let timeToNextPoint = 'N/A';
 
+// GPX 播放速度獨立於搖桿速度，單位 m/s
+let playbackSpeed = CONFIG.GPX_DEFAULT_SPEED;
+
 let _smoothPlaybackTimer = null;
 let _smoothSegIdx = 0;
 let _smoothSegT = 0;
 
-// 預計算快取：載入路徑後儲存每段距離，避免 tick 內重複計算
-let _segDistCache = [];
+// 模組層級常數，避免每次計算時重新轉換
+const _DEG_TO_RAD = Math.PI / 180;
+const _EARTH_R    = 6371;
+
+// Float64Array：記憶體連續，比普通陣列快 ~2x 隨機存取
+let _segDistCache = new Float64Array(0);
 
 function buildSegDistCache() {
-    _segDistCache = [];
-    for (let i = 0; i < lineLatLngs.length - 1; i++) {
+    const n = lineLatLngs.length - 1;
+    _segDistCache = new Float64Array(n);
+    for (let i = 0; i < n; i++) {
         const [lat0, lng0] = lineLatLngs[i];
         const [lat1, lng1] = lineLatLngs[i + 1];
-        _segDistCache.push(calculateDistance(lat0, lng0, lat1, lng1));
+        _segDistCache[i] = calculateDistance(lat0, lng0, lat1, lng1);
     }
 }
 
@@ -34,11 +42,12 @@ function _smoothTick() {
         clearInterval(_smoothPlaybackTimer);
         _smoothPlaybackTimer = null;
         isPlaybackStopped = true;
+        wasPlaybackPaused = false;
         map.fire('playbackchange');
         return;
     }
 
-    let remainDist = joystickSpeed * (CONFIG.GPS_TICK_MS / 1000);
+    let remainDist = playbackSpeed * (CONFIG.GPS_TICK_MS / 1000);
 
     while (remainDist > 0 && _smoothSegIdx < lineLatLngs.length - 1) {
         const segDist = _segDistCache[_smoothSegIdx];
@@ -85,15 +94,23 @@ function _pushRouteLocation(lat, lng) {
         gpxMarker.setLatLng([lat, lng]);
     }
     setCoordinates(lat, lng);
-    fetch(CONFIG.API.SET_LOCATION, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ lat, lng })
-    });
+    // sendBeacon：fire-and-forget，不阻塞 UI，適合高頻位置推送
+    navigator.sendBeacon(
+        CONFIG.API.SET_LOCATION,
+        new Blob([JSON.stringify({ lat, lng })], { type: 'application/json' })
+    );
 }
 
 function processNextPoint() {
     if (isPlaybackStopped) return;
+
+    // 停止搖桿和方向鍵，避免兩者搶控制權
+    if (typeof joystickEnabled !== 'undefined' && joystickEnabled) {
+        toggleJoystick();
+    }
+    if (typeof _dpadActive !== 'undefined' && _dpadActive) {
+        _dpadClear();
+    }
 
     if (!wasPlaybackPaused) {
         _smoothSegIdx = 0;
@@ -105,30 +122,34 @@ function processNextPoint() {
     _smoothPlaybackTimer = setInterval(_smoothTick, CONFIG.GPS_TICK_MS);
 }
 
-// 平面近似（短距離用，比 Haversine 快 ~3x）
+// 設定 GPX 播放速度（供 UI 呼叫）
+function setPlaybackSpeed(mps) {
+    playbackSpeed = mps;
+}
+
+// 全部統一用「公尺」，避免 km vs m 混用造成速度計算錯誤
+
+// 平面近似（短距離，比 Haversine 快 ~3x，誤差 < 0.1%）回傳公尺
 function _distFlat(lat1, lon1, lat2, lon2) {
-    const DEG = Math.PI / 180;
-    const dlat = (lat2 - lat1) * DEG * CONFIG.METERS_PER_DEG_LAT;
-    const cosLat = Math.cos(lat1 * DEG);
-    const dlon = (lon2 - lon1) * DEG * CONFIG.METERS_PER_DEG_LAT * cosLat;
-    return Math.sqrt(dlat * dlat + dlon * dlon) / 1000; // km
+    const dlat = (lat2 - lat1) * _DEG_TO_RAD * CONFIG.METERS_PER_DEG_LAT;
+    const dlon = (lon2 - lon1) * _DEG_TO_RAD * CONFIG.METERS_PER_DEG_LAT * Math.cos(lat1 * _DEG_TO_RAD);
+    return Math.sqrt(dlat * dlat + dlon * dlon); // 公尺
 }
 
-// Haversine（長距離精確版）
+// Haversine（長距離精確版）回傳公尺
 function _distHaversine(lat1, lon1, lat2, lon2) {
-    const DEG = Math.PI / 180;
-    const dLat = (lat2 - lat1) * DEG;
-    const dLon = (lon2 - lon1) * DEG;
+    const dLat = (lat2 - lat1) * _DEG_TO_RAD;
+    const dLon = (lon2 - lon1) * _DEG_TO_RAD;
     const a = 0.5 - Math.cos(dLat) / 2 +
-        Math.cos(lat1 * DEG) * Math.cos(lat2 * DEG) * (1 - Math.cos(dLon)) / 2;
-    return 6371 * 2 * Math.asin(Math.sqrt(a));
+        Math.cos(lat1 * _DEG_TO_RAD) * Math.cos(lat2 * _DEG_TO_RAD) * (1 - Math.cos(dLon)) / 2;
+    return _EARTH_R * 2 * Math.asin(Math.sqrt(a)) * 1000; // km → 公尺
 }
 
+// 回傳公尺
 function calculateDistance(lat1, lon1, lat2, lon2) {
-    const dLat = Math.abs(lat2 - lat1);
-    const dLon = Math.abs(lon2 - lon1);
-    // GPS 相鄰點通常 < 1km，用平面近似即可
-    if (dLat < 0.01 && dLon < 0.01) return _distFlat(lat1, lon1, lat2, lon2);
+    if (Math.abs(lat2 - lat1) < 0.01 && Math.abs(lon2 - lon1) < 0.01) {
+        return _distFlat(lat1, lon1, lat2, lon2);
+    }
     return _distHaversine(lat1, lon1, lat2, lon2);
 }
 

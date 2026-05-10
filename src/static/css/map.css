@@ -1,200 +1,71 @@
-.leaflet-menu {
-    display: none;
-    position: absolute;
-    box-shadow: 0 1px 7px rgba(0,0,0,.4);
-    -webkit-border-radius: 4px;
-    border-radius: 4px;
-    padding: 4px 0;
-    background-color: #fff;
-    cursor: default;
-    -webkit-user-select: none;
-    -moz-user-select: none;
-    user-select: none;
-    z-index: 1001
-}
+/* map.css — GeoPort custom styles (DaisyUI + Tailwind base) */
 
-.leaflet-menu a.leaflet-menu-item {
-    display: block;
-    color: #222;
-    font-size: 12px;
-    line-height: 20px;
-    text-decoration: none;
-    padding: 0 12px;
-    border-top: 1px solid transparent;
-    border-bottom: 1px solid transparent;
-    cursor: default;
-    outline: 0
-}
-
-.leaflet-menu a.leaflet-menu-item.over {
-    background-color: #f4f4f4;
-    border-top: 1px solid #f0f0f0;
-    border-bottom: 1px solid #f0f0f0
-}
-
+/* ── Leaflet menu ── */
 .leaflet-menu-icon {
     margin: 2px 8px 0 0;
     width: 16px;
     height: 16px;
     float: left;
-    border: 0
+    border: 0;
 }
 
-#map {
-    width: 100%;
-    height: 500px;
-    max-height: 70vh;
-}
-
-.coordinates-container {
-    margin-top: 10px;
-}
-
-/* Dark mode styles */
-body.dark-mode {
-    background-color: #222;
-    color: #fff;
-}
-
-body.dark-mode div[class="p-3 px-md-4 mb-3 bg-white border-bottom box-shadow"],
-body.dark-mode select[class="custom-select"],
-body.dark-mode select[class="custom-select d-block w-100"],
-body.dark-mode input[type="option"],
-body.dark-mode input[class="form-control"],
-body.dark-mode #border,
-body.dark-mode .collapse textarea,
-body.dark-mode textarea {
-    background-color: #333;
-    color: #fff;
-    border-color: #666;
-}
-
-body.dark-mode #border.dark-mode-bg {
-    background-color: #222;
-    border-color: #666;
-}
-
-body.dark-mode #border.dark-mode-bg .box-shadow {
-    box-shadow: 0 0 10px rgba(255, 255, 255, 0.2);
-}
-
-body.dark-mode .toast {
-    background-color: #333;
-    color: #fff;
-}
-
-body.dark-mode .toast-header {
-    background-color: #555;
-    color: #fff;
-}
-
-body.dark-mode .toast-header .close {
-    color: #fff;
-}
-
-body.dark-mode .toast-body {
-    background-color: #333;
-    color: #fff;
-}
-
-body.dark-mode .modal-content {
-    background-color: #333;
-    color: #fff;
-}
-
-body.dark-mode .modal-header {
-    background-color: #555;
-    color: #fff;
-    border-bottom: 1px solid #666;
-}
-
-body.dark-mode .modal-body {
-    background-color: #333;
-    color: #fff;
-}
-
-body.dark-mode .modal-footer {
-    background-color: #333;
-    color: #fff;
-    border-top: 1px solid #666;
-}
-
-body.dark-mode .modal-header .close {
-    color: #fff;
-}
-
-body.dark-mode .modal-footer button {
-    color: #fff;
-    background-color: #555;
-    border-color: #555;
-}
-
-.marker-menu {
-    display: flex;
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 5px;
-    padding: 10px;
-    background-color: white;
-    border: 1px solid #ccc;
-    border-radius: 5px;
-    box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
-}
-
-.menu-item {
-    background-color: #f8f9fa;
-    border: none;
-    padding: 8px 12px;
-    cursor: pointer;
-    border-radius: 5px;
-    transition: background-color 0.3s;
-}
-
-.menu-item:hover {
-    background-color: #e9ecef;
-}
-
+/* ── Leaflet control buttons (FileLayer toolbar) ── */
 .leaflet-control-filelayer .leaflet-control-filelayer-custom {
     outline: none !important;
     border: none !important;
     box-shadow: none !important;
 }
+.leaflet-control-filelayer-custom { margin-bottom: 1px; }
+.leaflet-control-filelayer-custom:first-child { margin-top: 1px; }
+.leaflet-control-filelayer-custom:not(:last-child) { border-bottom: 1px solid #ccc; }
+.leaflet-bar.easy-button-container.leaflet-control { display: none; }
 
-.leaflet-control-filelayer-custom {
-    margin-bottom: 1px;
-}
+/* ── Popup ── */
+.custom-popup-content { width: 300px; }
 
-.leaflet-control-filelayer-custom:first-child {
-    margin-top: 1px;
+/* ── Marker context menu ── */
+.marker-menu {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 8px;
+    background: white;
+    border: 1px solid #ccc;
+    border-radius: 6px;
+    box-shadow: 0 2px 8px rgba(0,0,0,.12);
 }
+.menu-item {
+    background: #f8f9fa;
+    border: none;
+    padding: 6px 10px;
+    cursor: pointer;
+    border-radius: 4px;
+    font-size: 13px;
+    transition: background .2s;
+}
+.menu-item:hover { background: #e9ecef; }
 
-.leaflet-control-filelayer-custom:not(:last-child) {
-    border-bottom: 1px solid gray;
+/* ── DaisyUI dark theme adjustments for Leaflet ── */
+[data-theme="dark"] .leaflet-bar a,
+[data-theme="dark"] .leaflet-control-zoom a {
+    background-color: #2a2a2a;
+    color: #e0e0e0;
+    border-color: #444;
 }
-
-.leaflet-control-filelayer .leaflet-control-send-gpx1 {
-    outline: none !important;
-    border: none !important;
-    box-shadow: none !important;
+[data-theme="dark"] .leaflet-popup-content-wrapper,
+[data-theme="dark"] .leaflet-popup-tip {
+    background: #2a2a2a;
+    color: #e0e0e0;
 }
-
-.custom-popup-content {
-    width: 300px;
+[data-theme="dark"] .leaflet-menu {
+    background: #2a2a2a;
 }
-
-.time-to-next-point-control-container {
-    position: absolute;
-    bottom: 10px;
-    left: 10px;
+[data-theme="dark"] .leaflet-menu a.leaflet-menu-item {
+    color: #e0e0e0;
 }
-
-.leaflet-bar.easy-button-container.leaflet-control {
-    display: none;
+[data-theme="dark"] .leaflet-menu a.leaflet-menu-item.over {
+    background: #3a3a3a;
 }
-
-.leaflet-control-layers-toggle {
-    width: 10px;
-    height: 10px;
-    font-size: 8px;
-    padding: 4px;
-}
+[data-theme="dark"] .marker-menu { background: #2a2a2a; border-color: #444; }
+[data-theme="dark"] .menu-item { background: #333; color: #e0e0e0; }
+[data-theme="dark"] .menu-item:hover { background: #444; }

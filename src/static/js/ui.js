@@ -1,8 +1,85 @@
 // ui.js — dark mode, toast, modal helpers, save/download
 
+// ── Modal helpers (DaisyUI <dialog> API, no jQuery) ──────────────────────────
+
+function _showModal(id) {
+    const el = document.getElementById(id);
+    if (el) el.showModal();
+}
+function _closeModal(id) {
+    const el = document.getElementById(id);
+    if (el) el.close();
+}
+
+function showModalDeveloperModeRequired() { _showModal('developerModeRequiredModal'); }
+function showPairRecordModal()            { _showModal('pairRecordModal'); }
+function showModalWifiModeRequired()      { _showModal('wifiModeRequiredModal'); }
+function showModal()                      { _showModal('developerModeModal'); }
+function showModalTimeout()               { _showModal('modalTimeout'); }
+function closeModal()                     { _closeModal('developerModeModal'); }
+
+function showAlertOrModal(errorMessage) {
+    const connectTextElement = document.getElementById('connectText');
+    const spinnerElement     = document.getElementById('spinner');
+    if (connectTextElement) {
+        connectTextElement.innerText         = 'Connect Device';
+        spinnerElement.classList.add('hidden');
+    }
+    const modal = document.getElementById('developerError');
+    if (modal) {
+        document.getElementById('developerErrorMessage').innerText = errorMessage;
+        modal.showModal();
+    } else {
+        alert(errorMessage);
+    }
+}
+
+function exitApp() {
+    try {
+        _closeModal('aboutModal');
+        _showModal('shutdownModal');
+        navigator.sendBeacon(CONFIG.API.EXIT, JSON.stringify({}));
+        window.open('', '_self', ''); window.close();
+    } catch (err) {
+        console.error('Error during server shutdown:', err);
+    }
+}
+
+// ── Dark mode ─────────────────────────────────────────────────────────────────
+
 function toggleDarkMode() {
-    const checked = document.getElementById('darkModeSwitch').checked;
-    document.body.classList.toggle('dark-mode', checked);
+    const btn = document.getElementById('darkModeSwitch');
+    const isDark = document.documentElement.classList.toggle('dark');
+    btn.classList.toggle('active', isDark);
+}
+
+// ── Toast (DaisyUI) ───────────────────────────────────────────────────────────
+
+function displayToast(message) {
+    const stack = document.getElementById('toast-stack');
+    if (!stack) return;
+
+    const item = document.createElement('div');
+    item.className = 'toast-item';
+    item.innerHTML = `
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>
+        <span>${message}</span>
+    `;
+    stack.appendChild(item);
+
+    setTimeout(() => {
+        item.style.opacity = '0';
+        item.style.transform = 'translateY(.5rem)';
+        item.style.transition = 'opacity .3s, transform .3s';
+        setTimeout(() => item.remove(), 300);
+    }, 3000);
+}
+
+// ── Save / Download ───────────────────────────────────────────────────────────
+
+function aboutApp() {
+    event.preventDefault();
+    alert('App Version: ' + (window.APP_CONFIG?.appVersionNum ?? ''));
 }
 
 function handleSaveButtonClick() {
@@ -45,63 +122,4 @@ function downloadGeoJSON(data, filename) {
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
-}
-
-function showModalDeveloperModeRequired() { $('#developerModeRequiredModal').modal('show'); }
-function showPairRecordModal()            { $('#pairRecordModal').modal('show'); }
-function showModalWifiModeRequired()      { $('#wifiModeRequiredModal').modal('show'); }
-function showModal()                      { $('#developerModeModal').modal('show'); }
-function showModalTimeout()               { $('#modalTimeout').modal('show'); }
-function closeModal()                     { document.getElementById('developerModeModal').style.display = 'none'; }
-
-function displayToast(message) {
-    const toast = document.createElement('div');
-    toast.classList.add('toast');
-    toast.setAttribute('role', 'alert');
-    toast.setAttribute('aria-live', 'assertive');
-    toast.setAttribute('aria-atomic', 'true');
-    toast.innerHTML = `
-        <div class="toast-header">
-          <strong class="mr-auto">GeoPort</strong>
-          <small>Just Now</small>
-          <button type="button" class="ml-2 mb-1 close" data-bs-dismiss="toast" aria-label="Close">
-            <span aria-hidden="true">&times;</span>
-          </button>
-        </div>
-        <div class="toast-body">${message}</div>
-    `;
-    document.querySelector('.toast-container').appendChild(toast);
-    new bootstrap.Toast(toast).show();
-}
-
-function showAlertOrModal(errorMessage) {
-    const connectTextElement = document.getElementById('connectText');
-    const spinnerElement     = document.getElementById('spinner');
-    if (connectTextElement) {
-        connectTextElement.innerText  = 'Connect Device';
-        spinnerElement.style.display  = 'none';
-    }
-    const modal = document.getElementById('developerError');
-    if (modal) {
-        document.getElementById('developerErrorMessage').innerText = errorMessage;
-        $('#developerError').modal('show');
-    } else {
-        alert(errorMessage);
-    }
-}
-
-function exitApp() {
-    try {
-        $('#aboutModal').modal('hide');
-        $('#shutdownModal').modal('show');
-        navigator.sendBeacon(CONFIG.API.EXIT, JSON.stringify({}));
-        window.open('', '_self', ''); window.close();
-    } catch (err) {
-        console.error('Error during server shutdown:', err);
-    }
-}
-
-function aboutApp() {
-    event.preventDefault();
-    alert('App Version: ' + (window.APP_CONFIG?.appVersionNum ?? ''));
 }
