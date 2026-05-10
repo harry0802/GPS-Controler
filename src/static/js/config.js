@@ -1,0 +1,53 @@
+// config.js — 統一管理所有常數設定
+
+const CONFIG = Object.freeze({
+    // GPX 播放
+    GPS_TICK_MS: 500,           // 每次推送 GPS 位置的間隔 (ms)
+
+    // 搖桿
+    JOY_TICK_MS: 250,           // 搖桿位置更新間隔 (ms)
+    CONN_POLL_MS: 2000,         // 連線狀態輪詢間隔 (ms)
+    METERS_PER_DEG_LAT: 111320, // 每緯度度數對應公尺數
+
+    // 速度 (m/s)
+    SPEED: {
+        walk: 1.4,
+        run:  4.5,
+        bike: 5.2,
+    },
+
+    // 鍵盤方向鍵移動步進 (度)
+    KEY_STEP: 0.0001,
+
+    // 距離近似計算閾值：低於此值(km)用平面近似取代 Haversine
+    FLAT_APPROX_THRESHOLD_KM: 1.0,
+
+    // 重複點距離閾值 (km)，低於此值視為零距離跳過
+    DUPLICATE_POINT_KM: 0.0001,
+
+    // API 端點
+    API: {
+        SET_LOCATION:    '/set_location',
+        STOP_LOCATION:   '/stop_location',
+        UPDATE_LOCATION: '/update_location',
+        LIST_DEVICES:    '/list_devices',
+        CONNECT_DEVICE:  '/connect_device',
+        UPLOAD_GPX:      '/upload_gpx',
+        FUEL_TYPES:      '/api/fuel_types',
+        FUEL_DATA:       '/api/data',
+        CONN_STATUS:     '/connection_status',
+        JOYSTICK_STOP:   '/joystick/stop',
+        ENABLE_DEV_MODE: '/enable_developer_mode',
+        EXIT:            '/exit',
+    },
+
+    // 地圖預設縮放
+    DEFAULT_ZOOM: 4,
+    SEARCH_ZOOM: 13,
+
+    // Nipplejs 搖桿外觀
+    NIPPLE: {
+        color: '#007bff',
+        size: 120,
+    },
+});

@@ -1415,7 +1415,6 @@ def index():
     fetch_api_data(api_url)
     # Get the GitHub version
     github_version = get_github_version()
-    github_broadcast = get_github_broadcast()
     user_locale = get_user_country()
     logger.info(f"Country: {user_locale}")
     logger.info(f"Current platform: {platform}")
@@ -1434,7 +1433,7 @@ def index():
     else:
         version_message = None
 
-    return render_template('map.html', version_message=version_message, github_broadcast=github_broadcast,
+    return render_template('map.html', version_message=version_message,
                            user_locale=user_locale, app_version_num=APP_VERSION_NUMBER,
                            app_version_type=APP_VERSION_TYPE, error_message=error_message, current_platform=platform,
                            sudo_message=sudo_message)
