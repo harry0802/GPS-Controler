@@ -15,6 +15,7 @@ let playbackSpeed = CONFIG.GPX_DEFAULT_SPEED;
 let _smoothPlaybackTimer = null;
 let _smoothSegIdx = 0;
 let _smoothSegT = 0;
+let _tickCount = 0;  // 計數每幾個 UI tick 才推一次位置給裝置
 
 // 模組層級常數，避免每次計算時重新轉換
 const _DEG_TO_RAD = Math.PI / 180;
@@ -94,11 +95,48 @@ function _pushRouteLocation(lat, lng) {
         gpxMarker.setLatLng([lat, lng]);
     }
     setCoordinates(lat, lng);
-    // sendBeacon：fire-and-forget，不阻塞 UI，適合高頻位置推送
-    navigator.sendBeacon(
-        CONFIG.API.SET_LOCATION,
-        new Blob([JSON.stringify({ lat, lng })], { type: 'application/json' })
-    );
+
+    // 每 GPS_PUSH_EVERY 個 UI tick 才推一次給裝置，避免過於頻繁
+    _tickCount++;
+    if (_tickCount >= CONFIG.GPS_PUSH_EVERY) {
+        _tickCount = 0;
+        navigator.sendBeacon(
+            CONFIG.API.SET_LOCATION,
+            new Blob([JSON.stringify({ lat, lng })], { type: 'application/json' })
+        );
+    }
+}
+
+// 去除 lineLatLngs 中的折返段：
+// 若後段某個點曾在前段出現過（距離 < threshold 公尺），截斷到那個位置
+function _deduplicatePath() {
+    if (lineLatLngs.length < 4) return;
+
+    const THRESHOLD = 5; // 公尺，兩點距離小於此視為同一位置
+    const seen = [];     // 已確認的點
+
+    for (let i = 0; i < lineLatLngs.length; i++) {
+        const [lat, lng] = lineLatLngs[i];
+
+        // 檢查這個點是否在 seen 裡已經出現過（排除最近 10 個點，避免誤判）
+        let isDuplicate = false;
+        for (let j = 0; j < seen.length - 10; j++) {
+            const [slat, slng] = seen[j];
+            const dlat = (lat - slat) * 111320;
+            const dlng = (lng - slng) * 111320 * Math.cos(lat * Math.PI / 180);
+            if (Math.sqrt(dlat * dlat + dlng * dlng) < THRESHOLD) {
+                isDuplicate = true;
+                break;
+            }
+        }
+
+        if (isDuplicate) {
+            // 折返點發現，截斷路徑
+            lineLatLngs = lineLatLngs.slice(0, i);
+            break;
+        }
+        seen.push([lat, lng]);
+    }
 }
 
 function processNextPoint() {
@@ -115,6 +153,8 @@ function processNextPoint() {
     if (!wasPlaybackPaused) {
         _smoothSegIdx = 0;
         _smoothSegT = 0;
+        _tickCount = 0;
+        _deduplicatePath();   // 播放前去除折返重複段
         buildSegDistCache();
     }
 
@@ -130,9 +170,10 @@ function setPlaybackSpeed(mps) {
 // 全部統一用「公尺」，避免 km vs m 混用造成速度計算錯誤
 
 // 平面近似（短距離，比 Haversine 快 ~3x，誤差 < 0.1%）回傳公尺
+// 注意：度數差直接乘公尺/度，不需要再乘 DEG_TO_RAD
 function _distFlat(lat1, lon1, lat2, lon2) {
-    const dlat = (lat2 - lat1) * _DEG_TO_RAD * CONFIG.METERS_PER_DEG_LAT;
-    const dlon = (lon2 - lon1) * _DEG_TO_RAD * CONFIG.METERS_PER_DEG_LAT * Math.cos(lat1 * _DEG_TO_RAD);
+    const dlat = (lat2 - lat1) * CONFIG.METERS_PER_DEG_LAT;
+    const dlon = (lon2 - lon1) * CONFIG.METERS_PER_DEG_LAT * Math.cos(lat1 * _DEG_TO_RAD);
     return Math.sqrt(dlat * dlat + dlon * dlon); // 公尺
 }
 

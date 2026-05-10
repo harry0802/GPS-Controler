@@ -2,7 +2,8 @@
 
 const CONFIG = Object.freeze({
   // GPX 播放
-  GPS_TICK_MS: 500, // 每次推送 GPS 位置的間隔 (ms)
+  GPS_TICK_MS: 100,      // UI marker 更新間隔 (ms) — 越小越滑順
+  GPS_PUSH_EVERY: 5,     // 每幾個 tick 才推一次位置給裝置（100ms × 5 = 500ms）
 
   // 搖桿
   JOY_TICK_MS: 250, // 搖桿位置更新間隔 (ms)
