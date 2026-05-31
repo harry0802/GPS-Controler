@@ -5,6 +5,7 @@ let joystickEnabled = false;
 let nippleManager = null;
 let connStatusPollTimer = null;
 let connStatus = "connected";
+let _disconnectPromptShown = false;
 
 let _joyDx = 0,
   _joyDy = 0;
@@ -152,6 +153,13 @@ function startConnStatusPoll() {
         if (connStatus === "disconnected") {
           _joyDx = 0;
           _joyDy = 0;
+          if (!_disconnectPromptShown) {
+            _disconnectPromptShown = true;
+            const modal = document.getElementById('disconnectedModal');
+            if (modal) modal.showModal();
+          }
+        } else {
+          _disconnectPromptShown = false;
         }
       })
       .catch(() => {});
@@ -201,4 +209,26 @@ function _dpadClear() {
   if (joystickEnabled && !_joyTimer) {
     _joyTimer = setInterval(_joyTick, CONFIG.JOY_TICK_MS);
   }
+}
+
+function resetConnection() {
+  const modal = document.getElementById('disconnectedModal');
+  if (modal) modal.close();
+  const btn = document.getElementById('resetConnBtn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Resetting…'; }
+
+  fetch(CONFIG.API.RESET_CONNECTION, { method: 'POST' })
+    .then(r => r.json())
+    .then(d => {
+      if (d.error) {
+        displayToast('Reset failed: ' + d.error);
+      } else {
+        displayToast('Connection reset successfully');
+        _disconnectPromptShown = false;
+      }
+    })
+    .catch(() => displayToast('Reset request failed'))
+    .finally(() => {
+      if (btn) { btn.disabled = false; btn.textContent = 'Reset Connection'; }
+    });
 }

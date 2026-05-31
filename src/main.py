@@ -51,6 +51,7 @@ parser.add_argument('--no-browser', action='store_true', help='Skip auto opening
 parser.add_argument('--port', type=int, help='Specify port number to listen on for web browser requests')
 parser.add_argument('--wifihost', type=str, help='Specify the wifi IP address to connect to')
 parser.add_argument('--udid', type=str, help='Specify the device udid to target')
+parser.add_argument('--daemon', action='store_true', help='Run as background daemon, logs written to ~/GeoPort/geoport.log (macOS/Linux only)')
 args = parser.parse_args()
 #========= Arg Parser ========
 
@@ -152,6 +153,45 @@ if current_platform == "darwin":
         logger.info("Running as Sudo")
         sudo_message = ""
 
+
+
+def daemonize(log_file):
+    """Double-fork to detach from terminal; logs go to log_file."""
+    pid = os.fork()
+    if pid > 0:
+        sys.exit(0)
+
+    os.setsid()
+
+    pid = os.fork()
+    if pid > 0:
+        sys.exit(0)
+
+    os.makedirs(os.path.dirname(log_file), exist_ok=True)
+
+    devnull = open('/dev/null', 'r')
+    os.dup2(devnull.fileno(), sys.stdin.fileno())
+    devnull.close()
+
+    logfd = open(log_file, 'a')
+    os.dup2(logfd.fileno(), sys.stdout.fileno())
+    os.dup2(logfd.fileno(), sys.stderr.fileno())
+    logfd.close()
+
+    pid_file = os.path.join(os.path.dirname(log_file), 'geoport.pid')
+    with open(pid_file, 'w') as f:
+        f.write(str(os.getpid()))
+
+    # Reconfigure logging to write to file instead of terminal
+    for h in logging.root.handlers[:]:
+        logging.root.removeHandler(h)
+    logging.basicConfig(
+        level=logging.DEBUG,
+        format="%(asctime)s - %(levelname)s - %(message)s",
+        handlers=[logging.FileHandler(log_file, mode='a')]
+    )
+    logging.getLogger("urllib3").setLevel(logging.WARNING)
+    logging.getLogger('werkzeug').disabled = True
 
 
 def fetch_api_data(api_url):
@@ -1177,6 +1217,39 @@ def get_connection_status():
     return jsonify({'status': connection_status})
 
 
+@app.route('/reset_connection', methods=['POST'])
+def reset_connection():
+    """Re-establish the DVT tunnel using the current udid/connection_type."""
+    global rsd_host, rsd_port, connection_status
+    if udid is None or connection_type is None:
+        return jsonify({'error': 'No active device — please reconnect from the device list'})
+
+    # Invalidate cached RSD so _location_manager_run re-fetches it
+    if udid in rsd_data_map and connection_type in rsd_data_map[udid]:
+        del rsd_data_map[udid][connection_type]
+    rsd_host = None
+    rsd_port = None
+    connection_status = "reconnecting"
+
+    # Stop the existing location manager thread cleanly
+    stop_set_location_thread()
+
+    # Rebuild tunnel synchronously by re-running connect_device logic
+    data = {'udid': udid, 'connType': connection_type, 'ios_version': ios_version}
+    if connection_type == "USB":
+        result = connect_usb(data)
+    else:
+        result = connect_wifi(data)
+
+    result_data = result.get_json()
+    if result_data.get('error') or result_data.get('Error'):
+        connection_status = "disconnected"
+        return jsonify({'error': result_data.get('error') or result_data.get('Error')})
+
+    connection_status = "connected"
+    return jsonify({'status': 'reset_ok'})
+
+
 UPDATE_INTERVAL = 0.4
 METERS_PER_DEGREE_LAT = 111320.0
 HEARTBEAT_INTERVAL = 30
@@ -1504,8 +1577,21 @@ if __name__ == '__main__':
 
     chosen_port = try_bind_listener_on_free_port()
 
+    if args.daemon:
+        if is_windows:
+            logger.warning("--daemon is not supported on Windows, ignoring")
+        else:
+            log_file = os.path.join(home_dir, 'GeoPort', 'geoport.log')
+            pid_file = os.path.join(home_dir, 'GeoPort', 'geoport.pid')
+            print(f"Starting GeoPort in background...")
+            print(f"  Web UI : http://localhost:{chosen_port}")
+            print(f"  Logs   : {log_file}")
+            print(f"  Stop   : sudo kill $(cat {pid_file})")
+            sys.stdout.flush()
+            daemonize(log_file)
+
     # Check if --no-browser flag is provided
-    if not args.no_browser:
+    if not args.no_browser and not args.daemon:
         open_browser()
     else:
         logger.info("--no-browser flag passed")

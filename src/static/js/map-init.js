@@ -448,6 +448,7 @@ async function initializeMap(userLocale) {
         const b = L.DomUtil.create('button', 'map-tb-btn', bar);
         b.innerHTML = icon;
         b.title = title;
+        b.dataset.tooltip = title;
         b.type = 'button';
         L.DomEvent.on(b, 'click', L.DomEvent.stop);
         L.DomEvent.on(b, 'click', onClick);
@@ -493,6 +494,7 @@ async function initializeMap(userLocale) {
           if (_smoothPlaybackTimer) { clearInterval(_smoothPlaybackTimer); _smoothPlaybackTimer = null; }
           playBtn.innerHTML = ICON.play;
           playBtn.title = 'Play GPX';
+          playBtn.dataset.tooltip = 'Play GPX';
         } else {
           // play / resume
           isPlaybackStopped = false;
@@ -501,11 +503,16 @@ async function initializeMap(userLocale) {
           processNextPoint();
           playBtn.innerHTML = ICON.pause;
           playBtn.title = 'Pause GPX';
+          playBtn.dataset.tooltip = 'Pause GPX';
         }
       });
       // reset play button when playback ends
       map.on('playbackchange', () => {
-        if (isPlaybackStopped) { playBtn.innerHTML = ICON.play; playBtn.title = 'Play GPX'; }
+        if (isPlaybackStopped) {
+          playBtn.innerHTML = ICON.play;
+          playBtn.title = 'Play GPX';
+          playBtn.dataset.tooltip = 'Play GPX';
+        }
       });
 
       // Draw track

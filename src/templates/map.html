@@ -682,6 +682,33 @@
         color: hsl(0 0% 98%);
       }
       .map-tb-btn svg { pointer-events: none; }
+
+      /* tooltip */
+      .map-tb-btn { position: relative; }
+      .map-tb-btn::after {
+        content: attr(data-tooltip);
+        position: absolute;
+        left: calc(100% + 8px);
+        top: 50%;
+        transform: translateY(-50%);
+        background: hsl(240 10% 3.9%);
+        color: hsl(0 0% 98%);
+        font-size: 0.75rem;
+        font-weight: 500;
+        white-space: nowrap;
+        padding: 0.25rem 0.5rem;
+        border-radius: 0.25rem;
+        pointer-events: none;
+        opacity: 0;
+        transition: opacity 0.15s;
+        z-index: 9999;
+      }
+      .map-tb-btn:hover::after { opacity: 1; }
+      .dark .map-tb-btn::after {
+        background: hsl(0 0% 98%);
+        color: hsl(240 10% 3.9%);
+      }
+
       .dark .map-tb-btn {
         border-bottom-color: hsl(240 3.7% 15.9%);
         color: hsl(240 5% 64.9%);
@@ -1403,6 +1430,23 @@
               Close
             </button>
           </form>
+        </div>
+      </div>
+    </dialog>
+
+    <dialog id="disconnectedModal">
+      <div class="modal-inner">
+        <h3 class="modal-title">Connection Lost</h3>
+        <p class="modal-body">
+          The device connection was interrupted. Would you like to reset and reconnect?
+        </p>
+        <div class="modal-footer" style="display:flex;gap:8px;justify-content:flex-end;">
+          <form method="dialog">
+            <button class="btn btn-default btn-sm">Cancel</button>
+          </form>
+          <button class="btn btn-primary btn-sm" id="resetConnBtn" onclick="resetConnection()">
+            Reset Connection
+          </button>
         </div>
       </div>
     </dialog>

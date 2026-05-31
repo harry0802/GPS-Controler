@@ -41,6 +41,7 @@ const CONFIG = Object.freeze({
     FUEL_DATA: "/api/data",
     CONN_STATUS: "/connection_status",
     JOYSTICK_STOP: "/joystick/stop",
+    RESET_CONNECTION: "/reset_connection",
     ENABLE_DEV_MODE: "/enable_developer_mode",
     EXIT: "/exit",
   },
