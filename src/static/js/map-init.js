@@ -787,6 +787,7 @@ function submitCustomSpeed() {
 document.addEventListener("DOMContentLoaded", function () {
   _initLocationEls(); // 快取 DOM 元素供 location.js 使用
   initializeMap();
+  startConnStatusPoll();
   // fuel mode removed
   _elRsdData.addEventListener("change", updateSetLocationButtonStatus);
   _elCoordinates.addEventListener("input", updateSetLocationButtonStatus);

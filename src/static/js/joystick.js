@@ -11,17 +11,32 @@ let _joyDx = 0,
   _joyDy = 0;
 let _joyLat = null,
   _joyLng = null;
-let _joyTimer = null;
-let _joyInflight = false; // 節流：上一個請求未完成時跳過
 
 let _dpadActive = null;
-let _dpadTimer = null;
 
-const _DEG = Math.PI / 180;
-
-// 快取熱路徑 DOM 元素（_joyTick 每 250ms 執行）
 let _elJoyCoords = null;
 let _elConnIndicator = null;
+
+// 從 server 拉回目前座標，更新地圖 marker 和座標欄
+let _posSyncTimer = null;
+function _startPosSync() {
+  if (_posSyncTimer) return;
+  _posSyncTimer = setInterval(() => {
+    fetch(CONFIG.API.JOYSTICK_POSITION)
+      .then(r => r.json())
+      .then(d => {
+        if (d.lat == null) return;
+        _joyLat = d.lat;
+        _joyLng = d.lng;
+        if (_elJoyCoords) _elJoyCoords.value = `${d.lat.toFixed(6)}, ${d.lng.toFixed(6)}`;
+        if (typeof marker !== 'undefined' && marker) marker.setLatLng([d.lat, d.lng]);
+      })
+      .catch(() => {});
+  }, 500);
+}
+function _stopPosSync() {
+  if (_posSyncTimer) { clearInterval(_posSyncTimer); _posSyncTimer = null; }
+}
 
 function toggleJoystick() {
   joystickEnabled = !joystickEnabled;
@@ -44,41 +59,34 @@ function toggleJoystick() {
     _joyDx = 0;
     _joyDy = 0;
     initNipple();
-    startConnStatusPoll();
-    _joyTimer = setInterval(_joyTick, CONFIG.JOY_TICK_MS);
+    fetch(CONFIG.API.JOYSTICK_START, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ lat: _joyLat, lng: _joyLng, speed: joystickSpeed }),
+    });
+    _startPosSync();
   } else {
     destroyNipple();
     _dpadClear();
-    if (_joyTimer) {
-      clearInterval(_joyTimer);
-      _joyTimer = null;
-    }
-    stopConnStatusPoll();
+    _stopPosSync();
     fetch(CONFIG.API.JOYSTICK_STOP, { method: "POST" });
   }
 }
 
-function _joyTick() {
-  if (_joyLat === null || (_joyDx === 0 && _joyDy === 0)) return;
-  if (_joyInflight) return; // 上一個請求還在途中，跳過此 tick
-
-  const dt = CONFIG.JOY_TICK_MS / 1000;
-  const dist = joystickSpeed * dt;
-  const cosLat = Math.cos(_joyLat * _DEG);
-
-  _joyLat += (_joyDy * dist) / CONFIG.METERS_PER_DEG_LAT;
-  _joyLng += (_joyDx * dist) / (CONFIG.METERS_PER_DEG_LAT * cosLat);
-
-  _elJoyCoords.value = `${_joyLat}, ${_joyLng}`;
-
-  _joyInflight = true;
-  fetch(CONFIG.API.SET_LOCATION, {
+// 發方向給 server，停止和速度切換不節流確保立即生效
+let _sendDirTimer = null;
+let _lastSentSpeed = null;
+function _sendDirection(dx, dy) {
+  const isStop = (dx === 0 && dy === 0);
+  const speedChanged = joystickSpeed !== _lastSentSpeed;
+  if (!isStop && !speedChanged && _sendDirTimer) return;
+  if (!isStop) _sendDirTimer = setTimeout(() => { _sendDirTimer = null; }, 100);
+  _lastSentSpeed = joystickSpeed;
+  fetch(CONFIG.API.JOYSTICK_UPDATE, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ lat: _joyLat, lng: _joyLng }),
-  }).finally(() => {
-    _joyInflight = false;
-  });
+    body: JSON.stringify({ dx, dy, speed: joystickSpeed }),
+  }).catch(() => {});
 }
 
 function initNipple() {
@@ -94,11 +102,13 @@ function initNipple() {
     const force = Math.min(data.force, 1);
     _joyDx = Math.cos(data.angle.radian) * force;
     _joyDy = Math.sin(data.angle.radian) * force;
+    _sendDirection(_joyDx, _joyDy);
   });
   nippleManager.on("end", () => {
     if (_dpadActive) return;
     _joyDx = 0;
     _joyDy = 0;
+    _sendDirection(0, 0);
   });
 }
 
@@ -121,6 +131,7 @@ function setJoystickSpeed(mode, btn) {
   document.getElementById("custom-speed-input").classList.add("hidden");
   joystickSpeed = CONFIG.SPEED[mode] ?? CONFIG.SPEED.walk;
   if (typeof setPlaybackSpeed !== 'undefined') setPlaybackSpeed(joystickSpeed);
+  _sendSpeedNow(); // 立刻把新速度送給 server
 }
 
 function applyCustomSpeed() {
@@ -132,9 +143,22 @@ function applyCustomSpeed() {
   joystickSpeed = kmh / 3.6;
   document.getElementById("speed-btn-custom").textContent = `${kmh}km/h`;
   if (typeof setPlaybackSpeed !== 'undefined') setPlaybackSpeed(joystickSpeed);
+  _sendSpeedNow(); // 立刻把新速度送給 server
+}
+
+// 強制立刻送出目前方向 + 新速度，繞過節流
+function _sendSpeedNow() {
+  if (_sendDirTimer) { clearTimeout(_sendDirTimer); _sendDirTimer = null; }
+  _lastSentSpeed = joystickSpeed;
+  fetch(CONFIG.API.JOYSTICK_UPDATE, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ dx: _joyDx, dy: _joyDy, speed: joystickSpeed }),
+  }).catch(() => {});
 }
 
 function startConnStatusPoll() {
+  if (connStatusPollTimer) return; // 防止重複啟動
   const dot = document.getElementById("conn-indicator");
   connStatusPollTimer = setInterval(() => {
     fetch(CONFIG.API.CONN_STATUS)
@@ -150,15 +174,23 @@ function startConnStatusPoll() {
         if (label) label.textContent =
             connStatus === 'connected'    ? 'Connected'     :
             connStatus === 'reconnecting' ? 'Reconnecting…' : 'Disconnected';
+        const banner = document.getElementById('disconnect-banner');
         if (connStatus === "disconnected") {
           _joyDx = 0;
           _joyDy = 0;
+          fetch(CONFIG.API.JOYSTICK_UPDATE, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ dx: 0, dy: 0, speed: joystickSpeed }),
+          }).catch(() => {});
+          if (banner) banner.style.display = 'flex';
           if (!_disconnectPromptShown) {
             _disconnectPromptShown = true;
             const modal = document.getElementById('disconnectedModal');
             if (modal) modal.showModal();
           }
         } else {
+          if (banner) banner.style.display = 'none';
           _disconnectPromptShown = false;
         }
       })
@@ -182,23 +214,12 @@ function dpadToggle(dx, dy, dir) {
   _dpadClear();
   _dpadActive = dir;
   document.getElementById(`dpad-${dir}`).classList.add("active");
-  _joyDx = 0;
-  _joyDy = 0;
-  if (_joyTimer) {
-    clearInterval(_joyTimer);
-    _joyTimer = null;
-  }
   _joyDx = dx;
   _joyDy = dy;
-  _joyTick();
-  _dpadTimer = setInterval(_joyTick, CONFIG.JOY_TICK_MS);
+  _sendDirection(dx, dy);
 }
 
 function _dpadClear() {
-  if (_dpadTimer) {
-    clearInterval(_dpadTimer);
-    _dpadTimer = null;
-  }
   _joyDx = 0;
   _joyDy = 0;
   if (_dpadActive) {
@@ -206,9 +227,7 @@ function _dpadClear() {
     if (btn) btn.classList.remove("active");
   }
   _dpadActive = null;
-  if (joystickEnabled && !_joyTimer) {
-    _joyTimer = setInterval(_joyTick, CONFIG.JOY_TICK_MS);
-  }
+  _sendDirection(0, 0);
 }
 
 function resetConnection() {

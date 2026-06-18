@@ -1192,10 +1192,12 @@ def joystick_update():
 
 @app.route('/joystick/start', methods=['POST'])
 def joystick_start():
-    global joystick_thread, joystick_stop_event, current_lat, current_lng
+    global joystick_thread, joystick_stop_event, current_lat, current_lng, joystick_speed
     data = request.get_json()
     current_lat = float(data['lat'])
     current_lng = float(data['lng'])
+    if 'speed' in data:
+        joystick_speed = float(data['speed'])
     joystick_stop_event.set()
     if joystick_thread and joystick_thread.is_alive():
         joystick_thread.join(timeout=1)
@@ -1210,6 +1212,11 @@ def joystick_start():
 def joystick_stop_route():
     joystick_stop_event.set()
     return jsonify({'status': 'stopped'})
+
+
+@app.route('/joystick/position', methods=['GET'])
+def joystick_position():
+    return jsonify({'lat': current_lat, 'lng': current_lng})
 
 
 @app.route('/connection_status', methods=['GET'])
@@ -1601,7 +1608,7 @@ if __name__ == '__main__':
 
     #threading.Thread(target=open_browser).start()
 
-    app.run(debug=True, use_reloader=False, port=chosen_port, host='0.0.0.0')
+    app.run(debug=False, use_reloader=False, port=chosen_port, host='0.0.0.0')
 
 
 
