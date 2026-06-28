@@ -18,24 +18,38 @@ let _elJoyCoords = null;
 let _elConnIndicator = null;
 
 // 從 server 拉回目前座標，更新地圖 marker 和座標欄
-let _posSyncTimer = null;
+// 全程常駐 poll，讓手機 D-pad 移動時電腦 marker 也即時同步
+let _lastSyncLat = null, _lastSyncLng = null;
+
 function _startPosSync() {
-  if (_posSyncTimer) return;
-  _posSyncTimer = setInterval(() => {
+  // 已由 _startGlobalPosSync 常駐，不需再另開 timer
+}
+function _stopPosSync() {
+  // 不停止，保持常駐同步
+}
+
+function _startGlobalPosSync() {
+  setInterval(() => {
     fetch(CONFIG.API.JOYSTICK_POSITION)
       .then(r => r.json())
       .then(d => {
         if (d.lat == null) return;
+        // 座標沒變就不更新，避免干擾使用者拖 marker
+        if (d.lat === _lastSyncLat && d.lng === _lastSyncLng) return;
+        _lastSyncLat = d.lat;
+        _lastSyncLng = d.lng;
         _joyLat = d.lat;
         _joyLng = d.lng;
-        if (_elJoyCoords) _elJoyCoords.value = `${d.lat.toFixed(6)}, ${d.lng.toFixed(6)}`;
-        if (typeof marker !== 'undefined' && marker) marker.setLatLng([d.lat, d.lng]);
+        // 更新座標輸入框
+        const coordEl = document.getElementById('coordinates');
+        if (coordEl) coordEl.value = `${d.lat.toFixed(6)}, ${d.lng.toFixed(6)}`;
+        // 更新地圖 marker
+        if (typeof marker !== 'undefined' && marker) {
+          marker.setLatLng([d.lat, d.lng]);
+        }
       })
       .catch(() => {});
   }, 500);
-}
-function _stopPosSync() {
-  if (_posSyncTimer) { clearInterval(_posSyncTimer); _posSyncTimer = null; }
 }
 
 function toggleJoystick() {

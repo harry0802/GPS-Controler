@@ -350,6 +350,28 @@ async function initializeMap(userLocale) {
 
   await _initMapLocation(userLocale);
   map.on("dblclick", handleMapDoubleClick);
+
+  // Right-click context menu on map
+  map.on('contextmenu', function(e) {
+    L.DomEvent.stopPropagation(e);
+    const { lat, lng } = e.latlng;
+    L.popup({ closeButton: true, className: 'visited-ctx-popup' })
+      .setLatLng(e.latlng)
+      .setContent(`
+        <div style="padding:.25rem 0">
+          <div style="font-size:.75rem;color:#888;margin-bottom:.5rem">${lat.toFixed(6)}, ${lng.toFixed(6)}</div>
+          <button onclick="map.closePopup();openAddVisitedDialog(${lat},${lng})"
+            class="btn btn-success btn-sm" style="width:100%;gap:.4rem">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+              <path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7z"/>
+              <line x1="12" y1="6" x2="12" y2="12"/><line x1="9" y1="9" x2="15" y2="9"/>
+            </svg>
+            標記我去過這裡
+          </button>
+        </div>`)
+      .openOn(map);
+  });
+
   stadiaTileLayer.addTo(map);
 
   const baseLayers = {
@@ -786,8 +808,9 @@ function submitCustomSpeed() {
 // ===== DOMContentLoaded Bootstrap =====
 document.addEventListener("DOMContentLoaded", function () {
   _initLocationEls(); // 快取 DOM 元素供 location.js 使用
-  initializeMap();
+  initializeMap().then(() => initVisited());
   startConnStatusPoll();
+  _startGlobalPosSync();
   // fuel mode removed
   _elRsdData.addEventListener("change", updateSetLocationButtonStatus);
   _elCoordinates.addEventListener("input", updateSetLocationButtonStatus);

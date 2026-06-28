@@ -919,6 +919,16 @@
         </div>
         {% endif %}
 
+        <!-- Mobile QR code -->
+        <button class="btn btn-secondary btn-sm btn-icon" onclick="showMobileQR()" title="手機遠端">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/>
+            <rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="3" height="3"/>
+            <rect x="19" y="14" width="2" height="2"/><rect x="14" y="19" width="2" height="2"/>
+            <rect x="18" y="19" width="3" height="2"/>
+          </svg>
+        </button>
+
         <!-- Dark mode toggle -->
         <div class="flex items-center gap-1.5" style="margin-left: auto">
           <svg
@@ -1303,6 +1313,17 @@
           </div>
 
           <div id="dataList"></div>
+
+          <div class="separator"></div>
+
+          <!-- ── Visited Places ── -->
+          <div class="card">
+            <div style="display:flex;align-items:center;justify-content:space-between">
+              <p class="card-label" style="margin-bottom:0">去過的地方</p>
+              <span style="font-size:.7rem;color:hsl(240 3.8% 60%)">右鍵地圖可標記</span>
+            </div>
+            <div id="visited-list" style="max-height:200px;overflow-y:auto"></div>
+          </div>
         </aside>
 
         <!-- ══ MAP ══ -->
@@ -1447,6 +1468,44 @@
       </div>
     </dialog>
 
+    <dialog id="mobileQRModal">
+      <div class="modal-inner" style="align-items:center;text-align:center">
+        <h3 class="modal-title">手機遠端控制</h3>
+        <p class="modal-body">掃描 QR code 用手機貼座標直接傳送</p>
+        <div id="qrcode" style="margin:.25rem auto;width:200px;height:200px;display:flex;align-items:center;justify-content:center">
+          <span style="font-size:.8rem;color:#aaa">產生中…</span>
+        </div>
+        <p id="mobileUrl" class="modal-body" style="font-size:.75rem;word-break:break-all"></p>
+        <div class="modal-footer" style="justify-content:center">
+          <form method="dialog">
+            <button class="btn btn-secondary btn-sm">關閉</button>
+          </form>
+        </div>
+      </div>
+    </dialog>
+
+    <dialog id="addVisitedDialog">
+      <div class="modal-inner">
+        <h3 class="modal-title">標記去過的地方</h3>
+        <div style="display:flex;flex-direction:column;gap:.75rem">
+          <div>
+            <label style="font-size:.8rem;font-weight:500;display:block;margin-bottom:.25rem">地點名稱</label>
+            <input id="visitedName" class="input input-sm" type="text" placeholder="例：台北 101、家裡附近咖啡廳…" />
+          </div>
+          <div>
+            <label style="font-size:.8rem;font-weight:500;display:block;margin-bottom:.25rem">備註（選填）</label>
+            <input id="visitedNote" class="input input-sm" type="text" placeholder="例：好吃的拉麵店" />
+          </div>
+        </div>
+        <div class="modal-footer">
+          <form method="dialog">
+            <button class="btn btn-secondary btn-sm">取消</button>
+          </form>
+          <button class="btn btn-success btn-sm" onclick="confirmAddVisited()">確認標記</button>
+        </div>
+      </div>
+    </dialog>
+
     <dialog id="disconnectedModal">
       <div class="modal-inner">
         <h3 class="modal-title">Connection Lost</h3>
@@ -1475,5 +1534,17 @@
     <script src="/static/js/joystick.js"></script>
     <script src="/static/js/devices.js"></script>
     <script src="/static/js/map-init.js"></script>
+    <script src="/static/js/visited.js"></script>
+    <script>
+      async function showMobileQR() {
+        document.getElementById('mobileQRModal').showModal();
+        const container = document.getElementById('qrcode');
+        container.innerHTML = '<span style="font-size:.8rem;color:#aaa">產生中…</span>';
+        const res = await fetch('/api/mobile_url');
+        const { url } = await res.json();
+        document.getElementById('mobileUrl').textContent = url;
+        container.innerHTML = `<img src="/api/mobile_qr" width="200" height="200" style="border-radius:8px"/>`;
+      }
+    </script>
   </body>
 </html>

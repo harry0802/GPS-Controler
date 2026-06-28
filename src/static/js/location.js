@@ -20,13 +20,16 @@ function setCoordinates(lat, lng) {
   _elCoordinates.value = `${lat}, ${lng}`;
   updateSetLocationButtonStatus();
   updateStopLocationButtonStatus();
-  // 搖桿開啟時同步起始點，避免切換地點後回彈
   if (typeof joystickEnabled !== "undefined" && joystickEnabled) {
     _joyLat = lat;
     _joyLng = lng;
   }
-  // 只更新前端狀態，不再額外發 /update_location
-  // /set_location 本身已包含 location 變數的更新
+  // 同步目前座標到後端，讓手機也能知道目前位置
+  fetch('/api/current_location', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ lat, lng }),
+  }).catch(() => {});
 }
 
 function handleSearch() {

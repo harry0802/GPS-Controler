@@ -1497,6 +1497,58 @@ def exit_app():
     return jsonify(response)
 
 
+def get_local_ip():
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(('8.8.8.8', 80))
+        ip = s.getsockname()[0]
+        s.close()
+        return ip
+    except Exception:
+        return '127.0.0.1'
+
+@app.route('/mobile')
+def mobile():
+    return render_template('mobile.html')
+
+@app.route('/api/current_location', methods=['GET', 'POST'])
+def current_location():
+    global current_lat, current_lng, location
+    if request.method == 'POST':
+        data = request.get_json(silent=True) or {}
+        if 'lat' in data and 'lng' in data:
+            current_lat = float(data['lat'])
+            current_lng = float(data['lng'])
+            location = f"{current_lat} {current_lng}"
+        return jsonify({'ok': True})
+    # 後端沒有座標時，嘗試從 location 字串解析
+    if current_lat is None and location:
+        try:
+            parts = location.split()
+            return jsonify({'lat': float(parts[0]), 'lng': float(parts[1])})
+        except Exception:
+            pass
+    return jsonify({'lat': current_lat, 'lng': current_lng})
+
+@app.route('/api/mobile_url')
+def mobile_url():
+    ip = get_local_ip()
+    return jsonify({'url': f'http://{ip}:{chosen_port}/mobile'})
+
+@app.route('/api/mobile_qr')
+def mobile_qr():
+    import qrcode
+    import io
+    from flask import send_file
+    ip = get_local_ip()
+    url = f'http://{ip}:{chosen_port}/mobile'
+    img = qrcode.make(url)
+    buf = io.BytesIO()
+    img.save(buf, format='PNG')
+    buf.seek(0)
+    return send_file(buf, mimetype='image/png')
+
+
 @app.route('/')
 def index():
     # global error_message

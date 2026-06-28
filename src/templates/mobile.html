@@ -1,0 +1,461 @@
+<!doctype html>
+<html lang="zh-TW">
+  <head>
+    <title>GeoPort</title>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0" />
+    <style>
+      * { box-sizing: border-box; margin: 0; padding: 0; }
+      body {
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        background: #f4f4f5;
+        min-height: 100vh;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        padding: 1.25rem 1rem 2rem;
+        gap: .875rem;
+      }
+
+      .logo {
+        display: flex; align-items: center; gap: .5rem;
+        font-size: 1rem; font-weight: 700; color: #18181b;
+      }
+
+      .card {
+        background: #fff; border-radius: 14px; padding: 1rem;
+        width: 100%; max-width: 420px;
+        box-shadow: 0 1px 4px rgba(0,0,0,.08);
+        display: flex; flex-direction: column; gap: .625rem;
+      }
+      .card-label {
+        font-size: .68rem; font-weight: 700; text-transform: uppercase;
+        letter-spacing: .06em; color: #71717a;
+      }
+
+      /* Status */
+      .status-badge {
+        display: inline-flex; align-items: center; gap: .35rem;
+        font-size: .8rem; font-weight: 500; padding: .3rem .75rem;
+        border-radius: 99px; border: 1.5px solid #e4e4e7; color: #71717a;
+      }
+      .status-dot { width:.45rem;height:.45rem;border-radius:50%;background:#a1a1aa;flex-shrink:0; }
+      .status-badge.ok  { border-color:#bbf7d0;color:#15803d;background:#f0fdf4; }
+      .status-badge.ok .status-dot { background:#16a34a; }
+      .status-badge.err { border-color:#fecaca;color:#b91c1c;background:#fef2f2; }
+      .status-badge.err .status-dot { background:#dc2626; }
+
+      /* Input row */
+      .input-row { display:flex; gap:.5rem; align-items:center; }
+      .input-row input {
+        flex:1; height:3rem;
+        border:1.5px solid #e4e4e7; border-radius:10px;
+        padding:0 .75rem; font-size:1rem; outline:none;
+        color:#18181b; background:#fff; transition:border-color .15s;
+      }
+      .input-row input:focus { border-color:#a1a1aa; box-shadow:0 0 0 3px rgba(161,161,170,.15); }
+      .input-row input::placeholder { color:#a1a1aa; }
+      .btn-clear {
+        flex-shrink:0; width:3rem; height:3rem;
+        border-radius:10px; border:1.5px solid #e4e4e7;
+        background:#fff; color:#71717a; cursor:pointer;
+        display:flex; align-items:center; justify-content:center;
+        -webkit-tap-highlight-color:transparent; font-size:1rem;
+        transition:background .15s;
+      }
+      .btn-clear:active { background:#f4f4f5; }
+
+      /* Buttons */
+      .btn-go {
+        width:100%; height:3rem; border-radius:12px; border:none;
+        background:#18181b; color:#fff; font-size:1rem; font-weight:600;
+        cursor:pointer; display:flex; align-items:center; justify-content:center; gap:.5rem;
+        transition:background .15s; -webkit-tap-highlight-color:transparent;
+      }
+      .btn-go:active { background:#3f3f46; }
+      .btn-go:disabled { background:#d4d4d8; }
+
+      .btn-outline {
+        width:100%; height:2.75rem; border-radius:12px;
+        border:1.5px solid #e4e4e7; background:#fff;
+        color:#18181b; font-size:.9rem; font-weight:600;
+        cursor:pointer; display:flex; align-items:center; justify-content:center; gap:.5rem;
+        transition:background .15s; -webkit-tap-highlight-color:transparent;
+      }
+      .btn-outline:active { background:#f4f4f5; }
+
+      /* Speed pills */
+      .pill-group { display:flex; border:1.5px solid #e4e4e7; border-radius:10px; overflow:hidden; }
+      .pill-btn {
+        flex:1; height:2.5rem; font-size:.85rem; font-weight:600;
+        background:transparent; border:none; border-right:1.5px solid #e4e4e7;
+        cursor:pointer; color:#71717a; transition:background .15s,color .15s;
+        -webkit-tap-highlight-color:transparent;
+      }
+      .pill-btn:last-child { border-right:none; }
+      .pill-btn.active { background:#18181b; color:#fff; }
+
+      /* D-pad */
+      .dpad {
+        display:grid;
+        grid-template-columns:repeat(3, 3.5rem);
+        grid-template-rows:repeat(3, 3.5rem);
+        gap:.3rem; margin:0 auto;
+      }
+      .dp {
+        display:flex; align-items:center; justify-content:center;
+        font-size:1.2rem; background:#fff; border:1.5px solid #e4e4e7;
+        border-radius:10px; cursor:pointer; user-select:none;
+        -webkit-tap-highlight-color:transparent;
+        transition:background .1s, color .1s;
+      }
+      .dp.ghost { color:#a1a1aa; }
+      .dp.center { background:#f4f4f5; border-color:#e4e4e7; cursor:default; }
+      .dp.active { background:#18181b; color:#fff; border-color:#18181b; }
+
+      @keyframes spin { to { transform:rotate(360deg); } }
+    </style>
+  </head>
+  <body>
+
+    <div class="logo">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7z"/>
+        <circle cx="12" cy="9" r="2.5"/>
+      </svg>
+      GeoPort
+    </div>
+
+    <!-- Status -->
+    <div class="card" style="padding:.6rem 1rem;flex-direction:row;align-items:center;justify-content:space-between">
+      <div id="statusBadge" class="status-badge">
+        <span class="status-dot"></span>
+        <span id="statusText">確認連線中…</span>
+      </div>
+      <button id="reconnectBtn" onclick="reconnect()"
+        style="display:none;height:2rem;padding:0 .875rem;border-radius:8px;border:none;
+               background:#dc2626;color:#fff;font-size:.8rem;font-weight:600;
+               cursor:pointer;align-items:center;gap:.35rem;-webkit-tap-highlight-color:transparent">
+        立即重連
+      </button>
+    </div>
+
+    <!-- 座標輸入 -->
+    <div class="card">
+      <p class="card-label">座標</p>
+      <div style="display:flex;gap:.5rem;align-items:center">
+        <input type="text" id="coordInput" placeholder="25.0330, 121.5654"
+          inputmode="decimal" autocomplete="off" autocorrect="off" spellcheck="false"
+          style="flex:1;height:3rem;border:1.5px solid #e4e4e7;border-radius:10px;padding:0 .75rem;font-size:1rem;outline:none;color:#18181b;background:#fff"/>
+        <!-- 貼上 -->
+        <button onclick="pasteCoord()" title="貼上"
+          style="flex-shrink:0;width:3rem;height:3rem;border-radius:10px;border:1.5px solid #e4e4e7;background:#fff;cursor:pointer;display:flex;align-items:center;justify-content:center;-webkit-tap-highlight-color:transparent">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#18181b" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/>
+            <rect x="8" y="2" width="8" height="4" rx="1" ry="1"/>
+          </svg>
+        </button>
+        <!-- 清除 -->
+        <button onclick="clearInput()" title="清除"
+          style="flex-shrink:0;width:3rem;height:3rem;border-radius:10px;border:1.5px solid #e4e4e7;background:#fff;cursor:pointer;display:flex;align-items:center;justify-content:center;-webkit-tap-highlight-color:transparent">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#71717a" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+          </svg>
+        </button>
+      </div>
+      <button class="btn-go" id="goBtn" onclick="goTo()">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+          <polygon points="5 3 19 12 5 21 5 3"/>
+        </svg>
+        送出
+      </button>
+      <div style="display:flex;gap:.5rem">
+        <button class="btn-outline" style="flex:1" onclick="stopWalk()">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+            <rect x="3" y="3" width="18" height="18" rx="2"/>
+          </svg>
+          停止移動
+        </button>
+        <button class="btn-outline" style="flex:1;border-color:#fecaca;color:#dc2626" onclick="stopLoc()">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+            <circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/>
+          </svg>
+          停止模擬
+        </button>
+      </div>
+    </div>
+
+    <!-- 速度 -->
+    <div class="card">
+      <p class="card-label">移動速度</p>
+      <div class="pill-group">
+        <button class="pill-btn active" onclick="setSpeed('walk',this)">步行</button>
+        <button class="pill-btn"        onclick="setSpeed('run',this)">跑步</button>
+        <button class="pill-btn"        onclick="setSpeed('bike',this)">單車</button>
+        <button class="pill-btn"        onclick="setSpeed('drive',this)">開車</button>
+      </div>
+    </div>
+
+    <!-- D-pad -->
+    <div class="card">
+      <p class="card-label">方向控制</p>
+      <div class="dpad">
+        <div class="dp ghost" id="dp-nw" onclick="dpadToggle(-0.707, 0.707,'nw')">↖</div>
+        <div class="dp"       id="dp-n"  onclick="dpadToggle(0, 1,'n')">▲</div>
+        <div class="dp ghost" id="dp-ne" onclick="dpadToggle(0.707, 0.707,'ne')">↗</div>
+        <div class="dp"       id="dp-w"  onclick="dpadToggle(-1, 0,'w')">◀</div>
+        <div class="dp center"></div>
+        <div class="dp"       id="dp-e"  onclick="dpadToggle(1, 0,'e')">▶</div>
+        <div class="dp ghost" id="dp-sw" onclick="dpadToggle(-0.707,-0.707,'sw')">↙</div>
+        <div class="dp"       id="dp-s"  onclick="dpadToggle(0,-1,'s')">▼</div>
+        <div class="dp ghost" id="dp-se" onclick="dpadToggle(0.707,-0.707,'se')">↘</div>
+      </div>
+    </div>
+
+    <script>
+      const SPEEDS = { walk:1.4, run:4.5, bike:5.6, drive:13.9 };
+      let currentSpeed = 1.4;
+      let _dpadActive = null; // 目前按下的方向
+
+      // ── 速度 ──
+      function setSpeed(mode, btn) {
+        currentSpeed = SPEEDS[mode];
+        document.querySelectorAll('.pill-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        if (_dpadActive) {
+          // 立刻更新速度
+          fetch('/joystick', {
+            method:'POST', headers:{'Content-Type':'application/json'},
+            body: JSON.stringify({ dx: _joyDx, dy: _joyDy, speed: currentSpeed })
+          });
+        }
+      }
+
+      let _joyDx = 0, _joyDy = 0;
+
+      // ── D-pad：點一下開始，再點同方向停，點其他方向換 ──
+      async function dpadToggle(dx, dy, dir) {
+        // 同方向再按 → 停止
+        if (_dpadActive === dir) {
+          document.getElementById('dp-' + dir).classList.remove('active');
+          _dpadActive = null;
+          _joyDx = 0; _joyDy = 0;
+          fetch('/joystick', {
+            method:'POST', headers:{'Content-Type':'application/json'},
+            body: JSON.stringify({ dx:0, dy:0, speed: currentSpeed })
+          });
+          return;
+        }
+
+        // 清掉舊方向
+        if (_dpadActive) {
+          document.getElementById('dp-' + _dpadActive).classList.remove('active');
+        }
+        _dpadActive = dir;
+        _joyDx = dx; _joyDy = dy;
+        document.getElementById('dp-' + dir).classList.add('active');
+
+        // 取目前位置（電腦 marker 位置 → 後端 joystick 位置 → 放棄但還是送方向）
+        try {
+          let pos = await fetch('/api/current_location').then(r=>r.json());
+          if (pos.lat == null) {
+            pos = await fetch('/joystick/position').then(r=>r.json());
+          }
+          if (pos.lat != null && pos.lng != null) {
+            await fetch('/joystick/start', {
+              method:'POST', headers:{'Content-Type':'application/json'},
+              body: JSON.stringify({ lat: pos.lat, lng: pos.lng, speed: currentSpeed })
+            });
+          }
+        } catch {}
+
+        fetch('/joystick', {
+          method:'POST', headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({ dx, dy, speed: currentSpeed })
+        });
+      }
+
+      // ── 連線狀態 ──
+      let _disconnectedSince = null;  // 開始斷線的時間
+      let _forceReconnTimer = null;   // 強制重連 timer
+      const FORCE_RECONNECT_MS = 15000; // 超過 15 秒自動強制重連
+
+      async function checkStatus() {
+        try {
+          const d = await fetch('/connection_status').then(r=>r.json());
+          const badge = document.getElementById('statusBadge');
+          const text  = document.getElementById('statusText');
+          const reconnBtn = document.getElementById('reconnectBtn');
+
+          if (d.status === 'connected') {
+            badge.className = 'status-badge ok';
+            text.textContent = '已連線';
+            reconnBtn.style.display = 'none';
+            _disconnectedSince = null;
+            if (_forceReconnTimer) { clearTimeout(_forceReconnTimer); _forceReconnTimer = null; }
+          } else if (d.status === 'disconnected') {
+            badge.className = 'status-badge err';
+            text.textContent = '裝置連線中斷';
+            reconnBtn.style.display = 'flex';
+            // 開始計時，超過門檻就強制重連
+            if (!_disconnectedSince) {
+              _disconnectedSince = Date.now();
+              _forceReconnTimer = setTimeout(() => {
+                showFeedback('⚡ 自動強制重連…', '');
+                reconnect();
+              }, FORCE_RECONNECT_MS);
+            }
+          } else {
+            // reconnecting
+            badge.className = 'status-badge';
+            text.textContent = '重連中…';
+            reconnBtn.style.display = 'none';
+          }
+        } catch {
+          document.getElementById('statusBadge').className = 'status-badge err';
+          document.getElementById('statusText').textContent = '無法連線到 GeoPort';
+        }
+      }
+
+      async function reconnect() {
+        const btn = document.getElementById('reconnectBtn');
+        btn.disabled = true;
+        btn.textContent = '重連中…';
+        if (_forceReconnTimer) { clearTimeout(_forceReconnTimer); _forceReconnTimer = null; }
+        _disconnectedSince = null;
+
+        try {
+          const r = await fetch('/reset_connection', { method:'POST' });
+          const d = await r.json();
+          if (d.error) {
+            showFeedback('❌ ' + d.error, 'err');
+          } else {
+            showFeedback('✓ 重連成功', 'ok');
+            // 重連後繼承上次座標，讓 D-pad 可以直接接續
+            const pos = await fetch('/api/current_location').then(r=>r.json());
+            if (pos.lat != null) {
+              await fetch('/joystick/start', {
+                method:'POST', headers:{'Content-Type':'application/json'},
+                body: JSON.stringify({ lat: pos.lat, lng: pos.lng, speed: currentSpeed })
+              });
+            }
+          }
+        } catch {
+          showFeedback('❌ 網路錯誤', 'err');
+        }
+
+        btn.disabled = false;
+        btn.textContent = '立即重連';
+        checkStatus();
+      }
+
+      checkStatus();
+      setInterval(checkStatus, 4000);
+
+      // 進頁面時載入目前座標
+      fetch('/api/current_location').then(r=>r.json()).then(d => {
+        if (d.lat != null && d.lng != null) {
+          document.getElementById('coordInput').value = `${d.lat.toFixed(6)}, ${d.lng.toFixed(6)}`;
+        }
+      }).catch(()=>{});
+
+      // ── 輸入框 ──
+      function clearInput() {
+        document.getElementById('coordInput').value = '';
+        document.getElementById('coordInput').focus();
+      }
+
+      async function pasteCoord() {
+        try {
+          const text = await navigator.clipboard.readText();
+          document.getElementById('coordInput').value = text;
+        } catch {
+          document.getElementById('coordInput').focus();
+          document.execCommand('paste');
+        }
+      }
+
+      // 去括號、全形逗號
+      function parseCoord(raw) {
+        const cleaned = raw.trim()
+          .replace(/[()（）]/g, '')
+          .replace(/[，、]/g, ',');
+        const parts = cleaned.split(/[\s,]+/).filter(Boolean);
+        if (parts.length < 2) return null;
+        const lat = parseFloat(parts[0]);
+        const lng = parseFloat(parts[1]);
+        if (isNaN(lat) || isNaN(lng)) return null;
+        if (lat < -90 || lat > 90 || lng < -180 || lng > 180) return null;
+        return { lat, lng };
+      }
+
+      // ── 傳送位置 ──
+      async function goTo() {
+        const raw = document.getElementById('coordInput').value;
+        const pos = parseCoord(raw);
+        if (!pos) { showFeedback('❌ 格式錯誤', 'err'); return; }
+
+        const btn = document.getElementById('goBtn');
+        btn.disabled = true;
+        btn.innerHTML = `<span style="display:inline-block;width:1rem;height:1rem;border:.15rem solid #fff;border-right-color:transparent;border-radius:50%;animation:spin .7s linear infinite"></span>`;
+
+        try {
+          const r = await fetch('/set_location', {
+            method:'POST', headers:{'Content-Type':'application/json'},
+            body: JSON.stringify(pos),
+          });
+          if (r.ok) {
+            // 同步座標到後端，讓 D-pad 接續從這裡移動
+            await fetch('/api/current_location', {
+              method:'POST', headers:{'Content-Type':'application/json'},
+              body: JSON.stringify(pos),
+            });
+            showFeedback('✓ 已傳送', 'ok');
+          } else {
+            showFeedback('❌ 傳送失敗', 'err');
+          }
+        } catch { showFeedback('❌ 網路錯誤', 'err'); }
+
+        btn.disabled = false;
+        btn.innerHTML = `<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg> 送出`;
+      }
+
+      // ── 停止移動（D-pad 停止，GPS 繼續在當前位置）──
+      function stopWalk() {
+        if (_dpadActive) {
+          document.getElementById('dp-' + _dpadActive).classList.remove('active');
+          _dpadActive = null;
+        }
+        _joyDx = 0; _joyDy = 0;
+        fetch('/joystick', {
+          method:'POST', headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({ dx:0, dy:0, speed: currentSpeed })
+        });
+        showFeedback('已停止移動', 'ok');
+      }
+
+      // ── 停止模擬（GPS 完全關閉）──
+      async function stopLoc() {
+        stopWalk();
+        await fetch('/stop_location', { method:'POST', headers:{'Content-Type':'application/json'}, body:'{}' });
+        showFeedback('已停止模擬', 'ok');
+      }
+
+      // ── 回饋 ──
+      let _ft;
+      function showFeedback(msg, type) {
+        const badge = document.getElementById('statusBadge');
+        const text  = document.getElementById('statusText');
+        badge.className = 'status-badge ' + (type||'');
+        text.textContent = msg;
+        clearTimeout(_ft);
+        _ft = setTimeout(checkStatus, 2500);
+      }
+
+      document.getElementById('coordInput').addEventListener('keypress', e => {
+        if (e.key === 'Enter') goTo();
+      });
+    </script>
+
+  </body>
+</html>
