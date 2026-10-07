@@ -31,31 +31,38 @@ pip install -r requirements.txt
 
 2. 啟動服務 (Run Application)
 
-方法 A：使用 Python 指令啟動（推薦）
+方法 A：使用 Python 指令啟動（可指定 Port）
+
+預設直接執行主程式：
 
 python main.py
 
 
-(若系統同時存在 Python 2，請使用 python3 main.py；若主程式名稱不同，請替換為實際的檔名如 app.py)
+若您的程式支援透過參數指定 Port（例如指定 Port 54321）：
 
-方法 B：使用快速啟動檔 (macOS)
+python main.py --port 54321
 
-在 Mac 環境下，可以直接按兩下執行或在終端機輸入：
+
+(註：若系統預設為 Python 2，請改用 python3；若主程式檔名為 app.py 或 run.py 請相應調整)
+
+方法 B：使用快速啟動腳本 (macOS)
+
+在 Mac 環境下，可以直接點擊或在終端機執行：
 
 ./GeoPort\ .command
 
 
 3. 開啟網頁介面 (Access Web UI)
 
-服務啟動後，請開啟瀏覽器並造訪：
+服務啟動後，請開啟瀏覽器並造訪對應的埠號（Port）：
 
 👉 http://localhost:54321
 
 📁 專案結構 (Project Structure)
 
 .
-├── main.py               # 主程式入口
+├── main.py               # Python 主程式入口
 ├── requirements.txt      # Python 依賴套件清單
-├── GeoPort .command      # macOS 快速啟動檔
-└── images/               # 專案圖檔與展示 GIF
+├── GeoPort .command      # macOS 快速啟動腳本
+└── images/               # 專案圖檔與示範 GIF
     └── create-track.gif
